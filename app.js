@@ -8,13 +8,21 @@
 const SPECIES = { dog: "🐶", cat: "🐱" };
 const SERVICES = ["Basic", "Hair Styling"];
 // Suggested breeds for the booking form's breed field (a <datalist>, so typing
-// anything else — mixed breeds, cats, less common breeds — still works fine).
-const BREEDS = [
+// anything else — mixed breeds, less common breeds — still works fine). Shown list
+// depends on the selected species (dog vs cat).
+const DOG_BREEDS = [
   "Corgi", "Pomeranian", "Maltipoo", "Poodle", "Siberian Husky", "Labrador Retriever",
   "Golden Retriever", "Shih Tzu", "Chihuahua", "French Bulldog", "Bulldog", "Beagle",
   "Pug", "Maltese", "Schnauzer", "Shiba Inu", "Border Collie", "Dachshund",
   "Yorkshire Terrier", "Cavalier King Charles Spaniel",
 ];
+const CAT_BREEDS = [
+  "Domestic Shorthair", "Domestic Longhair", "Persian", "Siamese", "British Shorthair",
+  "Scottish Fold", "Maine Coon", "Ragdoll", "American Shorthair", "Exotic Shorthair",
+  "Sphynx", "Bengal", "Munchkin", "Burmese", "Himalayan",
+  "Russian Blue", "Norwegian Forest Cat", "Abyssinian", "Turkish Angora", "Manx",
+];
+function breedsForSpecies(species) { return species === "cat" ? CAT_BREEDS : DOG_BREEDS; }
 const RECUR = {
   none:    { label: "One-time",       rrule: null },
   weekly:  { label: "Every week",     rrule: "FREQ=WEEKLY" },
@@ -24,31 +32,41 @@ const RECUR = {
 // Maps a booking service label to the key used in a pet profile's typical-time fields
 const SERVICE_TIME_KEY = { "Basic": "shower", "Hair Styling": "styling" };
 // Weight-tier pricing (THB) from the shop's price sheet. Basic is a range (the sheet notes
-// it depends on hair length, which isn't tracked yet, so we show the full range); Full
-// Groom (mapped to the app's "Hair Styling" service) is a single fixed price per tier.
-const WEIGHT_TIERS = [
-  { name: "Tiny",         maxKg: 2,  basic: [300, 350],   fullGroom: 600 },
-  { name: "Mini",         maxKg: 5,  basic: [400, 450],   fullGroom: 750 },
-  { name: "Small",        maxKg: 10, basic: [500, 550],   fullGroom: 900 },
-  { name: "Medium",       maxKg: 15, basic: [650, 700],   fullGroom: 1300 },
-  { name: "Large",        maxKg: 20, basic: [750, 850],   fullGroom: 1550 },
-  { name: "Extra-Large",  maxKg: 30, basic: [950, 1150],  fullGroom: 1800 },
-  { name: "Giant",        maxKg: 40, basic: [1200, 1500], fullGroom: 1900 },
-  { name: "Extra-Giant",  maxKg: 50, basic: [1500, 1600], fullGroom: 2500 },
+// it depends on hair length, which isn't tracked yet, so we show the full range); same
+// for Full Groom (mapped to "Hair Styling") — a range for most tiers, occasionally a
+// single fixed price (modeled as [n, n] so the shape is consistent either way).
+const DOG_WEIGHT_TIERS = [
+  { name: "Tiny",         maxKg: 2,  basic: [300, 350],   fullGroom: [600, 600] },
+  { name: "Mini",         maxKg: 5,  basic: [400, 450],   fullGroom: [750, 750] },
+  { name: "Small",        maxKg: 10, basic: [500, 550],   fullGroom: [900, 900] },
+  { name: "Medium",       maxKg: 15, basic: [650, 700],   fullGroom: [1300, 1300] },
+  { name: "Large",        maxKg: 20, basic: [750, 850],   fullGroom: [1550, 1550] },
+  { name: "Extra-Large",  maxKg: 30, basic: [950, 1150],  fullGroom: [1800, 1800] },
+  { name: "Giant",        maxKg: 40, basic: [1200, 1500], fullGroom: [1900, 1900] },
+  { name: "Extra-Giant",  maxKg: 50, basic: [1500, 1600], fullGroom: [2500, 2500] },
 ];
-function tierForWeight(kg) {
+const CAT_WEIGHT_TIERS = [
+  { name: "Tiny",   maxKg: 1,  basic: [300, 350], fullGroom: [500, 500] },
+  { name: "Small",  maxKg: 3,  basic: [350, 550], fullGroom: [800, 850] },
+  { name: "Medium", maxKg: 5,  basic: [500, 650], fullGroom: [1000, 1100] },
+  { name: "Large",  maxKg: 10, basic: [700, 800], fullGroom: [1200, 1300] },
+];
+function tiersForSpecies(species) { return species === "cat" ? CAT_WEIGHT_TIERS : DOG_WEIGHT_TIERS; }
+function tierForWeight(kg, species) {
   const n = Number(kg);
   if (!kg || isNaN(n) || n <= 0) return null;
-  return WEIGHT_TIERS.find((t) => n <= t.maxKg) || WEIGHT_TIERS[WEIGHT_TIERS.length - 1];
+  const tiers = tiersForSpecies(species);
+  return tiers.find((t) => n <= t.maxKg) || tiers[tiers.length - 1];
 }
+function fmtPriceRange(range) { return range[0] === range[1] ? `฿${range[0]}` : `฿${range[0]}–${range[1]}`; }
 // Estimated total for the given services at this pet's weight tier. Returns null if
 // weight is unknown or no priced service is selected.
-function estimateCost(weightKg, services) {
-  const tier = tierForWeight(weightKg);
+function estimateCost(weightKg, services, species) {
+  const tier = tierForWeight(weightKg, species);
   if (!tier || !services || !services.length) return null;
   let min = 0, max = 0, matched = false;
   if (services.includes("Basic")) { min += tier.basic[0]; max += tier.basic[1]; matched = true; }
-  if (services.includes("Hair Styling")) { min += tier.fullGroom; max += tier.fullGroom; matched = true; }
+  if (services.includes("Hair Styling")) { min += tier.fullGroom[0]; max += tier.fullGroom[1]; matched = true; }
   if (!matched) return null;
   return { tier: tier.name, min, max, label: min === max ? `฿${min}` : `฿${min}–${max}` };
 }
@@ -72,11 +90,13 @@ const GROOMER_COLORS = [
 const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], scheduleDate: "", scheduleHiddenGroomers: [], search: { name: "", breed: "" } };
 const getCalendarId = () => (state.settings.find((s) => s.id === "calendar") || {}).calendarId || "";
 const getCustomBreeds = () => (state.settings.find((s) => s.id === "breeds") || {}).list || [];
-// Static top-20 list plus any breed staff have typed in before, deduped case-insensitively.
-function allBreeds() {
+// Static per-species list plus any breed staff have typed in before (shared across
+// species — a small imprecision, but keeps the "remembered breeds" data model simple),
+// deduped case-insensitively.
+function allBreeds(species) {
   const seen = new Set();
   const out = [];
-  [...BREEDS, ...getCustomBreeds()].forEach((b) => {
+  [...breedsForSpecies(species), ...getCustomBreeds()].forEach((b) => {
     const key = b.trim().toLowerCase();
     if (key && !seen.has(key)) { seen.add(key); out.push(b.trim()); }
   });
@@ -86,7 +106,7 @@ function allBreeds() {
 async function rememberBreed(breed) {
   const b = (breed || "").trim();
   if (!b) return;
-  const known = allBreeds().map((x) => x.toLowerCase());
+  const known = [...DOG_BREEDS, ...CAT_BREEDS, ...getCustomBreeds()].map((x) => x.toLowerCase());
   if (known.includes(b.toLowerCase())) return;
   const rec = { id: "breeds", list: [...getCustomBreeds(), b], updatedAt: Date.now() };
   await DB.put("settings", rec);
@@ -466,7 +486,7 @@ function viewPetDetail() {
   const t = p.times || {};
   const history = [...(p.history || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
   const photo = p.photo ? `style="background-image:url('${p.photo}')"` : "";
-  const priceTier = tierForWeight(p.weight);
+  const priceTier = tierForWeight(p.weight, p.species);
 
   return `
   <button class="btn ghost sm" data-nav="pets">← All pets</button>
@@ -494,8 +514,8 @@ function viewPetDetail() {
         ${priceTier ? `
           <h3 class="section-title" style="margin-top:14px">Estimated pricing (${priceTier.name}, ${esc(p.weight)}kg)</h3>
           <div class="time-pills">
-            <span class="time-pill">🚿 Basic · ฿${priceTier.basic[0]}–${priceTier.basic[1]}</span>
-            <span class="time-pill">💈 Full Groom · ฿${priceTier.fullGroom}</span>
+            <span class="time-pill">🚿 Basic · ${fmtPriceRange(priceTier.basic)}</span>
+            <span class="time-pill">💈 Full Groom · ${fmtPriceRange(priceTier.fullGroom)}</span>
           </div>` : ""}
       </div>
     </div>
@@ -562,7 +582,7 @@ function bookingRow(b) {
     : "";
   const total = bookingDurationHours(b);
   const pet = b.petId ? state.pets.find((p) => p.id === b.petId) : null;
-  const cost = pet ? estimateCost(pet.weight, b.services) : null;
+  const cost = pet ? estimateCost(pet.weight, b.services, pet.species) : null;
   return `
   <div class="booking">
     <div class="stripe" style="background:${groomerColor(b.groomerId)}"></div>
@@ -1028,8 +1048,8 @@ function petEditorModal(pet) {
     </div>
     <div class="field-row">
       <div class="field"><label>Breed</label>
-        <input id="f-breed" list="breed-list" value="${esc(p.breed || "")}" placeholder="Poodle, or type your own">
-        <datalist id="breed-list">${allBreeds().map((b) => `<option value="${esc(b)}">`).join("")}</datalist>
+        <input id="f-breed" list="breed-list" value="${esc(p.breed || "")}" placeholder="${(p.species || "dog") === "cat" ? "Persian, or type your own" : "Poodle, or type your own"}">
+        <datalist id="breed-list">${allBreeds(p.species || "dog").map((b) => `<option value="${esc(b)}">`).join("")}</datalist>
       </div>
       <div class="field"><label>Weight (kg)</label><input id="f-weight" type="number" step="0.1" value="${esc(p.weight || "")}" placeholder="8.5"></div>
     </div>
@@ -1047,6 +1067,12 @@ function petEditorModal(pet) {
       <div class="row"><button class="btn" data-close-modal>Cancel</button>
       <button class="btn primary" id="save-pet">Save</button></div>
     </div>`);
+
+  $("#f-species").addEventListener("change", () => {
+    const isCat = $("#f-species").value === "cat";
+    $("#breed-list").innerHTML = allBreeds($("#f-species").value).map((b) => `<option value="${esc(b)}">`).join("");
+    $("#f-breed").placeholder = isCat ? "Persian, or type your own" : "Poodle, or type your own";
+  });
 
   // photo pick
   let photoData = p.photo || null;
@@ -1140,6 +1166,7 @@ function bookingModal(booking, prefillPet) {
   const initialBreed = b.breed || (matchedPet ? matchedPet.breed : "");
   const initialGroomer = b.groomerId || (matchedPet ? matchedPet.groomerId : "") || "";
   const initialWeight = matchedPet ? (matchedPet.weight || "") : "";
+  const initialSpecies = matchedPet ? (matchedPet.species || "dog") : "dog";
   const initialServices = b.services || [];
   const initialHours = b.serviceHours || {};
 
@@ -1162,17 +1189,19 @@ function bookingModal(booking, prefillPet) {
     <div id="new-pet-box" class="card pad" style="margin:10px 0; background:var(--surface-2); border-style:dashed" hidden>
       <div class="spread" style="margin-bottom:8px"><strong>New pet profile</strong>
         <span class="faint" style="font-size:12px">Created together with this booking</span></div>
-      <div class="field"><label>Species</label>
-        <select id="np-species"><option value="dog">🐶 Dog</option><option value="cat">🐱 Cat</option></select></div>
       <button class="btn sm" id="np-photo-btn" type="button">Upload photo</button>
       <input type="file" id="np-photo-input" accept="image/*" hidden>
     </div>
 
-    <div class="field-row three">
+    <div class="field-row">
+      <div class="field"><label>Species</label>
+        <select id="b-species"><option value="dog" ${initialSpecies === "dog" ? "selected" : ""}>🐶 Dog</option><option value="cat" ${initialSpecies === "cat" ? "selected" : ""}>🐱 Cat</option></select></div>
       <div class="field"><label>Breed</label>
-        <input id="b-breed" list="breed-list" value="${esc(initialBreed)}" placeholder="Poodle, or type your own">
-        <datalist id="breed-list">${allBreeds().map((b) => `<option value="${esc(b)}">`).join("")}</datalist>
+        <input id="b-breed" list="breed-list" value="${esc(initialBreed)}" placeholder="${initialSpecies === "cat" ? "Persian, or type your own" : "Poodle, or type your own"}">
+        <datalist id="breed-list">${allBreeds(initialSpecies).map((b) => `<option value="${esc(b)}">`).join("")}</datalist>
       </div>
+    </div>
+    <div class="field-row">
       <div class="field"><label>Groomer</label>
         <select id="b-groomer"><option value="">— Choose —</option>
           ${state.groomers.map((g) => `<option value="${g.id}" ${initialGroomer === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select></div>
@@ -1232,12 +1261,17 @@ function bookingModal(booking, prefillPet) {
     const um = $("#unmatch-pet");
     if (um) um.onclick = () => { matchedPet = null; isNewPet = false; newPetBox.hidden = true; paintAvatar(); paintStatus(); petInput.focus(); updateCostEstimate(); };
   }
+  function refreshBreedDatalist() {
+    $("#breed-list").innerHTML = allBreeds($("#b-species").value).map((b) => `<option value="${esc(b)}">`).join("");
+  }
   function applyMatch(pet) {
     matchedPet = pet; isNewPet = false; newPetBox.hidden = true;
     petInput.value = pet.name;
     if (pet.breed) $("#b-breed").value = pet.breed;
     if (pet.groomerId) $("#b-groomer").value = pet.groomerId;
     if (pet.weight) $("#b-weight").value = pet.weight;
+    $("#b-species").value = pet.species || "dog";
+    refreshBreedDatalist();
     suggestBox.hidden = true; suggestBox.innerHTML = "";
     paintAvatar(); paintStatus();
     prefillHoursFromPet();
@@ -1288,7 +1322,7 @@ function bookingModal(booking, prefillPet) {
     const weight = $("#b-weight").value;
     const services = $$(".b-svc").filter((cb) => cb.checked).map((cb) => cb.dataset.svc);
     if (!services.length) { el.textContent = ""; return; }
-    const est = estimateCost(weight, services);
+    const est = estimateCost(weight, services, $("#b-species").value);
     el.textContent = est ? `Estimated cost: ${est.label} (${est.tier})` : "Add the pet's weight to estimate cost.";
   }
 
@@ -1309,6 +1343,11 @@ function bookingModal(booking, prefillPet) {
   $$(".b-hr").forEach((inp) => inp.addEventListener("input", () => { touchedHours[inp.dataset.svc] = true; updateTotal(); }));
 
   $("#b-recur").addEventListener("change", () => { $("#b-until-field").hidden = $("#b-recur").value === "none"; });
+  $("#b-species").addEventListener("change", () => {
+    refreshBreedDatalist();
+    $("#b-breed").placeholder = $("#b-species").value === "cat" ? "Persian, or type your own" : "Poodle, or type your own";
+    updateCostEstimate();
+  });
 
   $("#np-photo-btn").onclick = () => $("#np-photo-input").click();
   $("#np-photo-input").onchange = async (e) => {
@@ -1335,6 +1374,7 @@ function bookingModal(booking, prefillPet) {
     const groomerId = $("#b-groomer").value;
     const breed = $("#b-breed").value.trim();
     const weight = $("#b-weight").value.trim();
+    const species = $("#b-species").value;
     let petId = matchedPet ? matchedPet.id : null;
 
     if (!matchedPet) {
@@ -1346,16 +1386,15 @@ function bookingModal(booking, prefillPet) {
       const newPet = {
         id: DB.uid("pet"), createdAt: Date.now(),
         photo: newPetPhoto, name: petName,
-        species: ($("#np-species") && $("#np-species").value) || "dog",
-        breed, weight,
+        species, breed, weight,
         groomerId, times, history: [],
       };
       await DB.put("pets", newPet);
       upsertLocal("pets", newPet);
       petId = newPet.id;
-    } else if (weight && weight !== String(matchedPet.weight || "")) {
-      // Keep the pet's profile in sync if weight was updated right here in the booking form.
-      const updatedPet = { ...matchedPet, weight };
+    } else if ((weight && weight !== String(matchedPet.weight || "")) || species !== (matchedPet.species || "dog")) {
+      // Keep the pet's profile in sync if weight/species were updated right here in the booking form.
+      const updatedPet = { ...matchedPet, weight: weight || matchedPet.weight, species };
       await DB.put("pets", updatedPet);
       upsertLocal("pets", updatedPet);
     }

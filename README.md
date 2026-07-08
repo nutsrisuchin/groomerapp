@@ -84,12 +84,18 @@ any data regardless).
 - **Groomers** — add/remove groomers, each with a color (the full Google Calendar palette,
   11 colors including yellow). Seeded with **Mint, Mikka, Boat**.
 
-### Pricing (weight-tier based)
+### Pricing (weight-tier based, dog and cat)
 Basic maps to the price sheet's "Basic" range (shown as a range since it depends on hair
-length, which isn't tracked); Hair Styling maps to "Full Groom" (a single fixed price per
-tier). The weight tiers and prices are hardcoded in `WEIGHT_TIERS` near the top of `app.js`
-— there's no in-app settings screen for this yet, so updating prices means editing that
-array directly and redeploying. Estimates only appear once a pet's weight is set.
+length, which isn't tracked); Hair Styling maps to "Full Groom". Dogs and cats have separate
+weight-tier tables (`DOG_WEIGHT_TIERS` / `CAT_WEIGHT_TIERS` near the top of `app.js`) since
+the shop prices them differently — the booking form's Dog/Cat selector picks which one
+applies. There's no in-app settings screen for this yet, so updating prices means editing
+those arrays directly and redeploying. Estimates only appear once a pet's weight is set.
+
+### Breeds
+The breed suggestion list also depends on species — `DOG_BREEDS` / `CAT_BREEDS` (20 each)
+in `app.js`. Typing anything not on the list still works fine and gets remembered as a
+suggestion for next time (shared across both species, for simplicity).
 - **Admins** — add/remove people who can log into the app, each with their own name + PIN.
 - **Calendar** — connect a Google account and set the shared Calendar ID that bookings sync to.
 - **Schedule** — Day / Week / Month views, built entirely from the app's own booking data
