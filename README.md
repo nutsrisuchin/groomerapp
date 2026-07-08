@@ -117,7 +117,7 @@ Uses the same Google Cloud project as Firebase — no new project needed.
 Open the **Calendar** tab → paste the Calendar ID → *Save Calendar ID* → **Connect Google
 Calendar** (signs in with whichever Google account is connecting; needs edit access to that
 calendar). From then on, in that browser: creating or editing a booking creates/updates a
-matching Calendar event (title = `Name · Breed`, color = the groomer's, duration = the sum
+matching Calendar event (title = `Name Breed Service`, color = the groomer's, duration = the sum
 of that booking's service hours, recurrence = the chosen repeat rule + until date); deleting
 a booking removes its event.
 

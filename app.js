@@ -7,6 +7,14 @@
 /* ---------- constants ---------- */
 const SPECIES = { dog: "🐶", cat: "🐱" };
 const SERVICES = ["Shower", "Hair Clipping", "Hair Styling"];
+// Suggested breeds for the booking form's breed field (a <datalist>, so typing
+// anything else — mixed breeds, cats, less common breeds — still works fine).
+const BREEDS = [
+  "Corgi", "Pomeranian", "Maltipoo", "Poodle", "Siberian Husky", "Labrador Retriever",
+  "Golden Retriever", "Shih Tzu", "Chihuahua", "French Bulldog", "Bulldog", "Beagle",
+  "Pug", "Maltese", "Schnauzer", "Shiba Inu", "Border Collie", "Dachshund",
+  "Yorkshire Terrier", "Cavalier King Charles Spaniel",
+];
 const RECUR = {
   none:    { label: "One-time",       rrule: null },
   weekly:  { label: "Every week",     rrule: "FREQ=WEEKLY" },
@@ -607,7 +615,10 @@ function bookingModal(booking, prefillPet) {
     </div>
 
     <div class="field-row">
-      <div class="field"><label>Breed</label><input id="b-breed" value="${esc(initialBreed)}" placeholder="Poodle"></div>
+      <div class="field"><label>Breed</label>
+        <input id="b-breed" list="breed-list" value="${esc(initialBreed)}" placeholder="Poodle, or type your own">
+        <datalist id="breed-list">${BREEDS.map((b) => `<option value="${esc(b)}">`).join("")}</datalist>
+      </div>
       <div class="field"><label>Groomer</label>
         <select id="b-groomer"><option value="">— Choose —</option>
           ${state.groomers.map((g) => `<option value="${g.id}" ${initialGroomer === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select></div>

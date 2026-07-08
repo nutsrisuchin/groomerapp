@@ -64,8 +64,9 @@
   function buildEventBody(booking, groomer) {
     const hours = Object.values(booking.serviceHours || {}).reduce((a, v) => a + (Number(v) || 0), 0) || 1;
     const end = new Date(new Date(booking.start).getTime() + hours * 3600 * 1000).toISOString();
+    const parts = [booking.petName, booking.breed, (booking.services || []).join(", ")].filter(Boolean);
     const event = {
-      summary: booking.breed ? `${booking.petName} · ${booking.breed}` : booking.petName,
+      summary: parts.join(" "),
       start: { dateTime: booking.start },
       end: { dateTime: end },
     };
