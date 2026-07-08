@@ -255,7 +255,20 @@ function findMatchingPets(query, limit = 6) {
     .sort((a, b) => a.name.toLowerCase().indexOf(q) - b.name.toLowerCase().indexOf(q))
     .slice(0, limit);
 }
-function minToHr(min) { return min == null ? null : Math.round((min / 60) * 100) / 100; }
+// One-time fixup: pet "typical time" used to be stored in minutes; now it's hours
+// (matching bookings). No realistic grooming service takes over 12 hours, so any
+// stored value that large is almost certainly a leftover minutes value — convert
+// it in place, once. Naturally becomes a no-op forever after the first pass.
+async function migratePetTimesToHours() {
+  for (const p of state.pets) {
+    const t = p.times || {};
+    let changed = false;
+    ["shower", "clipping", "styling"].forEach((k) => {
+      if (t[k] != null && t[k] > 12) { t[k] = Math.round((t[k] / 60) * 4) / 4; changed = true; }
+    });
+    if (changed) { await DB.put("pets", p); upsertLocal("pets", p); }
+  }
+}
 
 /* ---------- image resize ---------- */
 function fileToResizedDataURL(file, max = 640) {
@@ -430,9 +443,9 @@ function viewPetDetail() {
         <div class="divider"></div>
         <h3 class="section-title">Typical time consumed</h3>
         <div class="time-pills">
-          <span class="time-pill">🚿 Shower · ${t.shower ? t.shower + " min" : "—"}</span>
-          <span class="time-pill">✂️ Clipping · ${t.clipping ? t.clipping + " min" : "—"}</span>
-          <span class="time-pill">💈 Styling · ${t.styling ? t.styling + " min" : "—"}</span>
+          <span class="time-pill">🚿 Shower · ${t.shower ? t.shower + "h" : "—"}</span>
+          <span class="time-pill">✂️ Clipping · ${t.clipping ? t.clipping + "h" : "—"}</span>
+          <span class="time-pill">💈 Styling · ${t.styling ? t.styling + "h" : "—"}</span>
         </div>
       </div>
     </div>
@@ -900,11 +913,11 @@ function petEditorModal(pet) {
       <select id="f-groomer"><option value="">— Unassigned —</option>
         ${state.groomers.map((g) => `<option value="${g.id}" ${p.groomerId === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}
       </select></div>
-    <h3 class="section-title" style="margin-top:6px">Typical time consumed (minutes)</h3>
+    <h3 class="section-title" style="margin-top:6px">Typical time consumed (hours)</h3>
     <div class="field-row three">
-      <div class="field"><label>🚿 Shower</label><input id="f-shower" type="number" min="0" value="${esc(t.shower || "")}"></div>
-      <div class="field"><label>✂️ Clipping</label><input id="f-clipping" type="number" min="0" value="${esc(t.clipping || "")}"></div>
-      <div class="field"><label>💈 Styling</label><input id="f-styling" type="number" min="0" value="${esc(t.styling || "")}"></div>
+      <div class="field"><label>🚿 Shower</label><input id="f-shower" type="number" min="0" step="0.25" value="${esc(t.shower ?? "")}"></div>
+      <div class="field"><label>✂️ Clipping</label><input id="f-clipping" type="number" min="0" step="0.25" value="${esc(t.clipping ?? "")}"></div>
+      <div class="field"><label>💈 Styling</label><input id="f-styling" type="number" min="0" step="0.25" value="${esc(t.styling ?? "")}"></div>
     </div>
     <div class="row spread" style="margin-top:12px">
       ${pet ? `<button class="btn danger" data-action="del-pet" data-id="${p.id}">Delete pet</button>` : "<span></span>"}
@@ -1127,8 +1140,8 @@ function bookingModal(booking, prefillPet) {
       const svc = cb.dataset.svc;
       if (touchedHours[svc]) return;
       const hrInput = $(`.b-hr[data-svc="${svc}"]`);
-      const min = matchedPet.times && matchedPet.times[SERVICE_TIME_KEY[svc]];
-      if (min != null && hrInput && !hrInput.value) hrInput.value = minToHr(min);
+      const hrs = matchedPet.times && matchedPet.times[SERVICE_TIME_KEY[svc]];
+      if (hrs != null && hrInput && !hrInput.value) hrInput.value = hrs;
     });
     updateTotal();
   }
@@ -1185,7 +1198,7 @@ function bookingModal(booking, prefillPet) {
       const times = {};
       checkedServices.forEach((cb) => {
         const hrs = Number($(`.b-hr[data-svc="${cb.dataset.svc}"]`).value) || 0;
-        times[SERVICE_TIME_KEY[cb.dataset.svc]] = Math.round(hrs * 60);
+        times[SERVICE_TIME_KEY[cb.dataset.svc]] = hrs;
       });
       const newPet = {
         id: DB.uid("pet"), createdAt: Date.now(),
@@ -1519,6 +1532,7 @@ DB.onAuthChange(async (user) => {
     $("#login-gate").hidden = true;
     $("#app-shell").hidden = false;
     render();
+    migratePetTimesToHours();
   } catch (err) {
     // Most likely a revoked admin: their login still works, but Firestore rules deny them.
     stopWatchers();
