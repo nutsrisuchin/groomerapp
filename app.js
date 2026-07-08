@@ -699,11 +699,37 @@ function viewSchedule() {
   </div>`;
 }
 
+// Splits genuinely time-overlapping items into side-by-side lanes within the same column
+// so one booking never fully hides another; non-overlapping items keep the full width.
+function layoutLanes(items) {
+  const sorted = [...items].sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin);
+  const laneEnds = []; // laneEnds[i] = endMin of whichever item currently occupies lane i
+  const placed = sorted.map((it) => {
+    let lane = laneEnds.findIndex((end) => end <= it.startMin);
+    if (lane === -1) { lane = laneEnds.length; laneEnds.push(it.endMin); }
+    else laneEnds[lane] = it.endMin;
+    return Object.assign({}, it, { lane });
+  });
+  placed.forEach((it) => {
+    const cluster = placed.filter((o) => o.startMin < it.endMin && o.endMin > it.startMin);
+    it.laneCount = Math.max(...cluster.map((o) => o.lane + 1));
+  });
+  return placed;
+}
+
 function scheduleBlockHtml(it, openMin, closeMin, color) {
   const top = ((Math.max(it.startMin, openMin) - openMin) / 60) * PX_PER_HOUR;
-  const h = Math.max(((Math.min(it.endMin, closeMin) - Math.max(it.startMin, openMin)) / 60) * PX_PER_HOUR, 20);
+  const rawH = ((Math.min(it.endMin, closeMin) - Math.max(it.startMin, openMin)) / 60) * PX_PER_HOUR;
+  const h = Math.max(rawH, 24);
   const b = it.booking;
-  return `<div class="schedule-block" style="top:${top}px; height:${h}px; background:${color}" data-action="edit-booking" data-id="${b.id}" title="${esc(b.petName)}${b.breed ? " " + esc(b.breed) : ""}">
+  const laneCount = it.laneCount || 1, lane = it.lane || 0;
+  const widthPct = 100 / laneCount;
+  const left = `calc(${widthPct * lane}% + ${lane === 0 ? 4 : 2}px)`;
+  const width = `calc(${widthPct}% - ${laneCount === 1 ? 8 : 4}px)`;
+  const timeLabel = `${fmtMinutes(it.startMin)}–${fmtMinutes(it.endMin)}`;
+  // Inset top/height by 1-2px so back-to-back bookings show a visible seam instead of blending together.
+  return `<div class="schedule-block" style="top:${top + 1}px; height:${Math.max(h - 2, 20)}px; left:${left}; width:${width}; background:${color}" data-action="edit-booking" data-id="${b.id}" title="${esc(b.petName)}${b.breed ? " " + esc(b.breed) : ""} · ${timeLabel}">
+    <div class="sb-time">${timeLabel}</div>
     <strong>${esc(b.petName)}</strong>${(b.services || []).length ? `<br>${esc(b.services.join(", "))}` : ""}
   </div>`;
 }
@@ -724,7 +750,7 @@ function scheduleBodyDay(dateStr) {
   const all = bookingsOnDate(dateStr);
   const columns = groomers.map((g) => {
     const items = all.filter((it) => it.booking.groomerId === g.id);
-    return { groomer: g, items, free: freeSlots(items, openMin, closeMin) };
+    return { groomer: g, items: layoutLanes(items), free: freeSlots(items, openMin, closeMin) };
   });
   const gridHeight = ((closeMin - openMin) / 60) * PX_PER_HOUR;
   const now = nowMinutesToday();
@@ -779,7 +805,7 @@ function scheduleBodyWeek(dateStr) {
   const cols = days.map((d) => {
     const dow = new Date(d + "T00:00:00").getDay();
     const closed = (hours.closedDays || []).includes(dow);
-    const items = closed ? [] : bookingsOnDate(d).filter((it) => !hiddenIds.includes(it.booking.groomerId));
+    const items = closed ? [] : layoutLanes(bookingsOnDate(d).filter((it) => !hiddenIds.includes(it.booking.groomerId)));
     return { dateStr: d, dow, closed, items };
   });
 
