@@ -40,7 +40,7 @@ const GROOMER_COLORS = [
 ];
 
 /* ---------- state ---------- */
-const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], scheduleDate: "", scheduleHiddenGroomers: [], search: { name: "", breed: "" } };
+const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], scheduleDate: "", scheduleHiddenGroomers: [], search: { name: "", breed: "" } };
 const getCalendarId = () => (state.settings.find((s) => s.id === "calendar") || {}).calendarId || "";
 const getCustomBreeds = () => (state.settings.find((s) => s.id === "breeds") || {}).list || [];
 // Static top-20 list plus any breed staff have typed in before, deduped case-insensitively.
@@ -1226,33 +1226,54 @@ function bookingModal(booking, prefillPet) {
       services: checkedServices.map((c) => c.dataset.svc),
       serviceHours,
       notes: $("#b-notes").value.trim(),
-      calendarEventId: b.calendarEventId || null, // reserved for Google Calendar sync
+      calendarEventId: b.calendarEventId || null,
+      calendarDirty: true, // cleared once any connected device successfully syncs it — see reconcileCalendar()
     };
     await DB.put("bookings", rec);
     upsertLocal("bookings", rec);
     closeModal(); toast(booking ? "Booking updated" : "Booking created"); render();
-    syncBookingToCalendar(rec);
+    reconcileCalendar();
     rememberBreed(rec.breed);
     logActivity("booking", booking ? "updated" : "created",
       `${rec.petName}${rec.breed ? ` (${rec.breed})` : ""} with ${groomerName(rec.groomerId)} — ${fmtDate(rec.start)} ${fmtTime(rec.start)}`);
   };
 }
-// Best-effort: a Calendar failure here never undoes or blocks the booking save above.
-async function syncBookingToCalendar(rec) {
+
+/* ---------- Google Calendar reconciliation ----------
+   Sync no longer depends on "whoever made the change happened to be connected."
+   Every booking create/update marks itself calendarDirty; every delete of a synced
+   booking leaves a tombstone (calendarTombstones). ANY device that's currently
+   connected — triggered by its own actions, by live updates from other devices, or
+   right after connecting/silently renewing — processes the backlog: deletes
+   tombstoned events, then creates/updates anything dirty or never-synced. This means
+   a change made on an unconnected device still reaches Calendar as soon as any other
+   connected device (or that same device, once reconnected) sees it. */
+let reconciling = false;
+async function reconcileCalendar() {
+  if (reconciling || !GCal.isConnected()) return;
   const calendarId = getCalendarId();
-  if (!calendarId) { toast("Saved, but no Calendar ID is set — add one in the Calendar tab to sync."); return; }
-  if (!GCal.isConnected()) { toast("Saved, but Google Calendar isn't connected — connect it in the Calendar tab to sync."); return; }
+  if (!calendarId) return;
+  reconciling = true;
   try {
-    const eventId = await GCal.syncBooking(calendarId, rec, groomerById(rec.groomerId));
-    if (eventId !== rec.calendarEventId) {
-      rec.calendarEventId = eventId;
-      await DB.put("bookings", rec);
-      upsertLocal("bookings", rec);
-      render();
+    for (const t of state.calendarTombstones) {
+      try {
+        await GCal.deleteBooking(t.calendarId || calendarId, t.eventId);
+        await DB.del("calendarTombstones", t.id);
+        removeLocal("calendarTombstones", t.id);
+      } catch (err) { console.error("Tombstone sync failed", t, err); }
     }
-  } catch (err) {
-    console.error("Calendar sync failed", err);
-    toast(`Saved, but Google Calendar sync failed (${err.message || err}) — try reconnecting.`);
+    const pending = state.bookings.filter((b) => b.calendarDirty || !b.calendarEventId);
+    for (const b of pending) {
+      try {
+        const eventId = await GCal.syncBooking(calendarId, b, groomerById(b.groomerId));
+        b.calendarEventId = eventId;
+        b.calendarDirty = false;
+        await DB.put("bookings", b);
+        upsertLocal("bookings", b);
+      } catch (err) { console.error("Booking sync failed", b, err); }
+    }
+  } finally {
+    reconciling = false;
   }
 }
 function toLocalInput(d) {
@@ -1391,9 +1412,13 @@ async function handleAction(action, data) {
       if (confirm("Delete this booking?")) {
         const deleted = state.bookings.find((b) => b.id === data.id);
         await DB.del("bookings", data.id); removeLocal("bookings", data.id); toast("Booking deleted"); render();
-        const calendarId = getCalendarId();
-        if (deleted && deleted.calendarEventId && calendarId && GCal.isConnected()) {
-          GCal.deleteBooking(calendarId, deleted.calendarEventId).catch((err) => console.error("Calendar delete failed", err));
+        if (deleted && deleted.calendarEventId) {
+          // Always queue a tombstone, connected or not — whichever device is connected
+          // (this one now, or another one later) will pick it up via reconcileCalendar().
+          const tomb = { id: DB.uid("tomb"), calendarId: getCalendarId() || null, eventId: deleted.calendarEventId, petName: deleted.petName, deletedAt: Date.now() };
+          await DB.put("calendarTombstones", tomb);
+          upsertLocal("calendarTombstones", tomb);
+          reconcileCalendar();
         }
         if (deleted) logActivity("booking", "deleted", `${deleted.petName}${deleted.breed ? ` (${deleted.breed})` : ""} with ${groomerName(deleted.groomerId)}`);
       }
@@ -1471,12 +1496,18 @@ document.addEventListener("click", (e) => {
 /* ===================================================================
    AUTH GATE + BOOT
 =================================================================== */
-const COLLECTIONS = ["pets", "groomers", "bookings", "admins", "settings", "activity"];
+const COLLECTIONS = ["pets", "groomers", "bookings", "admins", "settings", "activity", "calendarTombstones"];
 let watchers = [];
 
 function startWatchers() {
   watchers = COLLECTIONS.map((name) =>
-    DB.watch(name, async (changed) => { state[changed] = await DB.getAll(changed); render(); })
+    DB.watch(name, async (changed) => {
+      state[changed] = await DB.getAll(changed);
+      render();
+      // Someone else's change (or this device's own) may need syncing to Calendar —
+      // reconcileCalendar() no-ops instantly if this device isn't connected.
+      if (changed === "bookings" || changed === "calendarTombstones") reconcileCalendar();
+    })
   );
 }
 function stopWatchers() {
@@ -1512,7 +1543,10 @@ $("#login-form").addEventListener("submit", async (e) => {
 $("#logout-btn").addEventListener("click", () => DB.logout());
 
 // Keeps the Calendar tab's Connected/Not connected badge live across silent background renewals.
-GCal.onStatusChange(() => { if (state.view === "calendar") render(); });
+GCal.onStatusChange((connected) => {
+  if (state.view === "calendar") render();
+  if (connected) reconcileCalendar(); // catch up on anything that piled up while disconnected
+});
 
 DB.onAuthChange(async (user) => {
   if (!user) {
@@ -1526,7 +1560,7 @@ DB.onAuthChange(async (user) => {
   try {
     await DB.seed();
     startWatchers();
-    [state.pets, state.groomers, state.bookings, state.admins, state.settings, state.activity] = await Promise.all(
+    [state.pets, state.groomers, state.bookings, state.admins, state.settings, state.activity, state.calendarTombstones] = await Promise.all(
       COLLECTIONS.map((name) => DB.getAll(name))
     );
     $("#login-gate").hidden = true;

@@ -143,6 +143,24 @@ browser memory only, deliberately, since a true always-on connection that surviv
 would need a small backend to hold a real refresh token.) If it's not connected, bookings
 still save normally; Calendar sync is always best-effort and never blocks or undoes a save.
 
+### Multi-device syncing: it doesn't matter who's connected
+Only one device needs to be connected at any given moment for everyone's changes to reach
+Calendar — sync isn't tied to whoever made the change. Every booking create/edit marks
+itself as needing a sync, and every deletion of a synced booking leaves a small "pending
+deletion" record in Firestore (`calendarTombstones`) — regardless of whether *that* device
+is connected. Any device that *is* connected — reacting to its own actions, to live updates
+from other devices, or right after connecting — clears this backlog: creates/updates
+whatever's pending, and deletes whatever's tombstoned. So if the front-desk PC stays
+connected all day, a booking cancelled from someone's phone (not connected) still disappears
+from Calendar within moments, without that phone ever needing its own connection. If nobody
+is connected when a change happens, it just waits — the next device to connect catches up
+automatically.
+
+One known, low-impact limitation: if two devices happen to be connected and processing the
+same brand-new booking at the exact same moment, it could create two duplicate Calendar
+events instead of one (no locking between devices). Rare in practice for a small shop, and
+easy to spot and delete manually if it ever happens.
+
 ### Switching from the demo calendar to the real one
 Once testing looks good: share the shop's real Google Calendar with whichever account(s)
 will connect (give them "Make changes to events" permission), add that account under
