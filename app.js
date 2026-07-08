@@ -578,30 +578,26 @@ function viewAdmins() {
 }
 
 /* ---------- CALENDAR SETTINGS ---------- */
-// Shown once right after a successful login if Calendar sync is configured (a Calendar
-// ID is set) but this browser isn't connected — e.g. the browser/tab was closed and the
-// in-memory OAuth connection was lost. GIS's popup only fires from a real click, so this
-// can't auto-connect; it just makes sure nobody forgets to click it.
-function promptConnectCalendarIfNeeded() {
-  if (!getCalendarId() || GCal.isConnected()) return;
-  openModal(`
-    <h2>Connect Google Calendar?</h2>
-    <div class="muted" style="margin-bottom:16px">Bookings won't sync to Calendar from this browser until you connect. You can always do this later from the Calendar tab.</div>
-    <div class="row" style="justify-content:flex-end; margin-top:8px">
-      <button class="btn" data-close-modal>Not now</button>
-      <button class="btn primary" id="reminder-connect">Connect Google Calendar</button>
-    </div>`);
-  $("#reminder-connect").onclick = async () => {
-    const btn = $("#reminder-connect");
-    btn.disabled = true; btn.textContent = "Connecting…";
-    try {
-      await GCal.connect();
-      closeModal(); toast("Connected to Google Calendar");
-    } catch (err) {
-      closeModal(); toast("Couldn't connect — check your pop-up blocker and try again from the Calendar tab.");
-    }
-  };
+// Persistent banner (not a one-shot modal — those are too easy to miss or accidentally
+// dismiss with a stray click on the backdrop) shown on every page whenever Calendar sync
+// is configured (a Calendar ID is set) but this browser isn't connected — e.g. the
+// browser/tab was closed and the in-memory OAuth connection was lost, including on a
+// plain refresh where Firebase silently resumes the session. Stays up until connected,
+// or dismissed for the current session (resets on next login).
+let gcalBannerDismissed = false;
+function updateGcalBanner() {
+  const el = $("#gcal-banner");
+  if (!el) return;
+  el.hidden = gcalBannerDismissed || !getCalendarId() || GCal.isConnected();
 }
+$("#gcal-banner-connect").addEventListener("click", async () => {
+  const btn = $("#gcal-banner-connect");
+  btn.disabled = true; btn.textContent = "Connecting…";
+  try { await GCal.connect(); toast("Connected to Google Calendar"); }
+  catch (err) { toast("Couldn't connect — check your pop-up blocker and try again."); }
+  finally { btn.disabled = false; btn.textContent = "Connect"; }
+});
+$("#gcal-banner-dismiss").addEventListener("click", () => { gcalBannerDismissed = true; updateGcalBanner(); });
 
 function viewCalendarSettings() {
   const calendarId = getCalendarId();
@@ -1588,10 +1584,11 @@ $("#login-gcal-btn").addEventListener("click", async () => {
 });
 updateLoginGcalStatus();
 
-// Keeps the Calendar tab's badge and the login screen's status live across silent renewals.
+// Keeps the Calendar tab's badge, the login screen's status, and the banner live across renewals.
 GCal.onStatusChange((connected) => {
   if (state.view === "calendar") render();
   updateLoginGcalStatus();
+  updateGcalBanner();
   if (connected) reconcileCalendar(); // catch up on anything that piled up while disconnected
 });
 
@@ -1613,9 +1610,10 @@ DB.onAuthChange(async (user) => {
     );
     $("#login-gate").hidden = true;
     $("#app-shell").hidden = false;
+    gcalBannerDismissed = false;
     render();
     migratePetTimesToHours();
-    promptConnectCalendarIfNeeded();
+    updateGcalBanner();
   } catch (err) {
     // Most likely a revoked admin: their login still works, but Firestore rules deny them.
     stopWatchers();

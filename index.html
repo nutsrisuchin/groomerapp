@@ -46,6 +46,14 @@
       <button class="btn ghost sm" id="logout-btn">Log out</button>
     </header>
 
+    <div id="gcal-banner" class="gcal-banner" hidden>
+      <span>📅 Google Calendar isn't connected in this browser — bookings won't sync until you connect.</span>
+      <div class="row" style="gap:8px">
+        <button class="btn sm primary" id="gcal-banner-connect">Connect</button>
+        <button class="icon-btn" id="gcal-banner-dismiss" aria-label="Dismiss">✕</button>
+      </div>
+    </div>
+
     <main id="view" class="view"><!-- views render here --></main>
   </div>
 

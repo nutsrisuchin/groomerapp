@@ -55,6 +55,10 @@ input,select,textarea{font-family:inherit; font-size:14px}
   background:rgba(255,255,255,.82); backdrop-filter:blur(10px);
   border-bottom:1px solid var(--line);
 }
+.gcal-banner{
+  display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
+  padding:10px 24px; background:#fff8e1; border-bottom:1px solid #f5d97a; font-size:13px; font-weight:600; color:#7a5b00;
+}
 .brand{display:flex; align-items:center; gap:10px; cursor:pointer; user-select:none}
 .brand-mark{font-size:26px}
 .brand-name{font-weight:800; font-size:18px; line-height:1; display:flex; flex-direction:column; gap:2px}
