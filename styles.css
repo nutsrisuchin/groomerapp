@@ -1,0 +1,209 @@
+/* ===================================================================
+   Pawfect Grooming Studio — styles
+   Soft, friendly, pet-salon aesthetic. Custom CSS (offline-safe).
+=================================================================== */
+:root{
+  --bg:        #f6f7fb;
+  --surface:   #ffffff;
+  --surface-2: #f1f3f9;
+  --ink:       #1f2430;
+  --ink-soft:  #5b6472;
+  --ink-faint: #9aa3b2;
+  --line:      #e6e9f0;
+  --brand:     #7c5cff;
+  --brand-ink: #ffffff;
+  --danger:    #e5484d;
+  --ok:        #2f9e63;
+  --shadow:    0 6px 24px rgba(31,36,48,.08);
+  --shadow-lg: 0 18px 48px rgba(31,36,48,.18);
+  --radius:    16px;
+  --radius-sm: 10px;
+}
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+html,body{margin:0;padding:0}
+body{
+  font-family:"Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
+  background:var(--bg); color:var(--ink);
+  -webkit-font-smoothing:antialiased;
+}
+button{font-family:inherit; cursor:pointer}
+input,select,textarea{font-family:inherit; font-size:14px}
+
+/* ---------- Login gate ---------- */
+.login-gate{
+  position:fixed; inset:0; z-index:100; display:flex; align-items:center; justify-content:center;
+  background:linear-gradient(160deg, var(--bg), var(--surface-2)); padding:20px;
+}
+.login-card{
+  width:min(360px,100%); background:var(--surface); border:1px solid var(--line); border-radius:20px;
+  box-shadow:var(--shadow-lg); padding:32px 28px; text-align:center;
+}
+.login-card h2{margin:6px 0 2px; font-size:20px}
+.login-card input{
+  width:100%; padding:12px 14px; border:1px solid var(--line); border-radius:var(--radius-sm);
+  font-size:18px; text-align:center; letter-spacing:.1em;
+}
+.login-card input:focus{outline:none; border-color:var(--brand); box-shadow:0 0 0 3px rgba(124,92,255,.15)}
+.login-error{color:var(--danger); font-size:13px; margin-top:10px; font-weight:600}
+
+/* ---------- Top bar ---------- */
+.topbar{
+  position:sticky; top:0; z-index:20;
+  display:flex; align-items:center; justify-content:space-between;
+  gap:16px; padding:12px 24px;
+  background:rgba(255,255,255,.82); backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--line);
+}
+.brand{display:flex; align-items:center; gap:10px; cursor:pointer; user-select:none}
+.brand-mark{font-size:26px}
+.brand-name{font-weight:800; font-size:18px; line-height:1; display:flex; flex-direction:column; gap:2px}
+.brand-name small{font-weight:600; font-size:11px; color:var(--ink-faint); letter-spacing:.06em; text-transform:uppercase}
+.topnav{display:flex; gap:4px; background:var(--surface-2); padding:4px; border-radius:12px}
+.nav-btn{
+  border:0; background:transparent; color:var(--ink-soft);
+  padding:8px 16px; border-radius:9px; font-weight:600; font-size:14px;
+}
+.nav-btn:hover{color:var(--ink)}
+.nav-btn.active{background:var(--surface); color:var(--brand); box-shadow:var(--shadow)}
+
+/* ---------- Layout ---------- */
+.view{max-width:1080px; margin:0 auto; padding:28px 24px 64px}
+.page-head{display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:20px}
+.page-head h1{font-size:24px; margin:0}
+.muted{color:var(--ink-soft)}
+.faint{color:var(--ink-faint)}
+.row{display:flex; gap:12px; align-items:center}
+.grow{flex:1}
+.stack{display:flex; flex-direction:column; gap:6px}
+.section-title{font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-faint); margin:0 0 10px}
+
+/* ---------- Cards ---------- */
+.card{background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow)}
+.card.pad{padding:20px}
+.grid{display:grid; gap:16px}
+.grid.home{grid-template-columns:1.3fr 1fr}
+.grid.pets{grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}
+@media(max-width:820px){ .grid.home{grid-template-columns:1fr} .topnav{display:none} }
+
+/* ---------- Buttons ---------- */
+.btn{
+  border:1px solid var(--line); background:var(--surface); color:var(--ink);
+  padding:10px 16px; border-radius:11px; font-weight:600; font-size:14px;
+  display:inline-flex; align-items:center; gap:8px; transition:transform .04s ease;
+}
+.btn:hover{background:var(--surface-2)}
+.btn:active{transform:translateY(1px)}
+.btn.primary{background:var(--brand); border-color:var(--brand); color:var(--brand-ink)}
+.btn.primary:hover{filter:brightness(1.05)}
+.btn.ghost{background:transparent; border-color:transparent; color:var(--ink-soft)}
+.btn.danger{color:var(--danger); border-color:transparent; background:transparent}
+.btn.danger:hover{background:#fdecec}
+.btn.sm{padding:6px 12px; font-size:13px; border-radius:9px}
+.btn.block{width:100%; justify-content:center}
+.icon-btn{border:0; background:transparent; padding:6px; border-radius:8px; color:var(--ink-soft); font-size:16px}
+.icon-btn:hover{background:var(--surface-2); color:var(--ink)}
+
+/* ---------- Forms ---------- */
+.field{display:flex; flex-direction:column; gap:6px; margin-bottom:14px}
+.field label{font-size:13px; font-weight:600; color:var(--ink-soft)}
+.field input, .field select, .field textarea{
+  width:100%; padding:10px 12px; border:1px solid var(--line);
+  border-radius:var(--radius-sm); background:var(--surface); color:var(--ink);
+}
+.field input:focus, .field select:focus, .field textarea:focus{
+  outline:none; border-color:var(--brand); box-shadow:0 0 0 3px rgba(124,92,255,.15)
+}
+.field textarea{resize:vertical; min-height:70px}
+.field-row{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+.field-row.three{grid-template-columns:1fr 1fr 1fr}
+.help{font-size:12px; color:var(--ink-faint)}
+
+/* ---------- Search bar (home) ---------- */
+.searchbar{display:grid; grid-template-columns:1fr 1fr auto; gap:10px}
+@media(max-width:520px){ .searchbar{grid-template-columns:1fr} }
+
+/* ---------- Pet cards ---------- */
+.pet-card{overflow:hidden; cursor:pointer; display:flex; flex-direction:column}
+.pet-card .photo{height:150px; background:var(--surface-2); background-size:cover; background-position:center; position:relative}
+.pet-card .photo .species{position:absolute; top:10px; left:10px; font-size:18px; background:rgba(255,255,255,.9); border-radius:8px; padding:2px 6px}
+.pet-card .body{padding:14px}
+.pet-card .name{font-weight:700; font-size:16px; margin:0}
+.pet-card .breed{color:var(--ink-soft); font-size:13px}
+.pet-card .meta{display:flex; gap:8px; align-items:center; margin-top:10px; font-size:12px; color:var(--ink-faint)}
+
+/* mini avatar (booking modal — display only, no upload affordance) */
+.mini-avatar{width:74px; height:74px; border-radius:16px; background:var(--surface-2); background-size:cover; background-position:center;
+  display:flex; align-items:center; justify-content:center; font-size:28px; color:var(--ink-faint); flex:none; border:1px solid var(--line)}
+
+/* pet search suggestions (booking modal) */
+.suggest-list{position:absolute; top:100%; left:0; right:0; z-index:5; background:var(--surface); border:1px solid var(--line);
+  border-radius:12px; box-shadow:var(--shadow-lg); margin-top:4px; max-height:240px; overflow:auto; padding:6px}
+.suggest-item{display:flex; align-items:center; gap:10px; padding:8px; border-radius:9px; cursor:pointer}
+.suggest-item:hover{background:var(--surface-2)}
+.suggest-item.create{color:var(--brand); font-weight:600; justify-content:center}
+.s-photo{width:34px; height:34px; border-radius:8px; background:var(--surface-2); background-size:cover; background-position:center;
+  display:flex; align-items:center; justify-content:center; font-size:16px; flex:none}
+.s-info .s-name{font-weight:600; font-size:13px}
+.s-info .s-breed{font-size:12px; color:var(--ink-soft)}
+
+/* avatar / photo dropzone */
+.avatar{width:120px; height:120px; border-radius:20px; background:var(--surface-2); background-size:cover; background-position:center;
+  display:flex; align-items:center; justify-content:center; color:var(--ink-faint); font-size:34px; border:2px dashed var(--line); cursor:pointer; overflow:hidden}
+.avatar:hover{border-color:var(--brand)}
+
+/* ---------- Chips / badges ---------- */
+.chip{display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:600; background:var(--surface-2); color:var(--ink-soft)}
+.dot{width:10px; height:10px; border-radius:50%; display:inline-block; flex:none}
+.groomer-tag{display:inline-flex; align-items:center; gap:7px; font-weight:600; font-size:13px}
+.recur-badge{font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--brand); background:rgba(124,92,255,.1); padding:2px 8px; border-radius:6px}
+
+/* ---------- Booking list ---------- */
+.booking{display:flex; gap:14px; align-items:center; padding:14px 16px; border-bottom:1px solid var(--line)}
+.booking:last-child{border-bottom:0}
+.booking .stripe{width:5px; align-self:stretch; border-radius:6px; flex:none}
+.booking .when{width:120px; flex:none}
+.booking .when .date{font-weight:700}
+.booking .when .time{font-size:13px; color:var(--ink-soft)}
+.booking .who{flex:1}
+.booking .who .pet{font-weight:700}
+.booking .who .sub{font-size:13px; color:var(--ink-soft)}
+
+/* ---------- Groomer manager ---------- */
+.groomer-row{display:flex; align-items:center; gap:12px; padding:12px 0; border-bottom:1px solid var(--line)}
+.groomer-row:last-child{border-bottom:0}
+.swatch{width:26px; height:26px; border-radius:8px; flex:none; border:1px solid rgba(0,0,0,.06)}
+.color-pick{display:flex; gap:8px; flex-wrap:wrap}
+.color-opt{width:30px; height:30px; border-radius:9px; border:2px solid transparent; cursor:pointer}
+.color-opt.sel{border-color:var(--ink); box-shadow:0 0 0 2px #fff inset}
+
+/* ---------- Empty states ---------- */
+.empty{text-align:center; padding:48px 20px; color:var(--ink-faint)}
+.empty .big{font-size:40px; margin-bottom:8px}
+
+/* ---------- Service history ---------- */
+.history-item{display:flex; gap:12px; padding:12px 0; border-bottom:1px dashed var(--line)}
+.history-item:last-child{border-bottom:0}
+.history-item .h-date{width:96px; flex:none; font-weight:700; font-size:13px}
+.history-item .h-body{flex:1}
+.time-pills{display:flex; gap:8px; flex-wrap:wrap; margin-top:4px}
+.time-pill{font-size:12px; background:var(--surface-2); padding:4px 10px; border-radius:8px; color:var(--ink-soft)}
+
+/* ---------- Modal ---------- */
+.modal-host{position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center; padding:20px}
+.modal-backdrop{position:absolute; inset:0; background:rgba(20,24,34,.45); backdrop-filter:blur(2px)}
+.modal{position:relative; background:var(--surface); border-radius:20px; box-shadow:var(--shadow-lg);
+  width:min(560px,100%); max-height:90vh; overflow:auto; padding:26px}
+.modal-x{position:absolute; top:14px; right:14px; border:0; background:var(--surface-2); width:32px; height:32px; border-radius:9px; color:var(--ink-soft)}
+.modal-x:hover{background:var(--line)}
+.modal h2{margin:0 0 4px; font-size:20px}
+
+/* ---------- Toast ---------- */
+.toast{position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+  background:var(--ink); color:#fff; padding:12px 20px; border-radius:12px; box-shadow:var(--shadow-lg); z-index:80; font-weight:600; font-size:14px}
+
+/* ---------- Misc ---------- */
+.divider{height:1px; background:var(--line); margin:16px 0}
+.spread{display:flex; align-items:center; justify-content:space-between; gap:12px}
+.tag-list{display:flex; gap:8px; flex-wrap:wrap}
+.link{color:var(--brand); font-weight:600; cursor:pointer; background:none; border:0; padding:0}

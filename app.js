@@ -1,0 +1,988 @@
+/* ===================================================================
+   app.js — Pawfect Grooming Studio
+   Views: home / pets / pet detail / bookings / groomers
+   Plain JS, no framework. State cached in memory, persisted via DB.
+=================================================================== */
+
+/* ---------- constants ---------- */
+const SPECIES = { dog: "🐶", cat: "🐱" };
+const SERVICES = ["Shower", "Hair Clipping", "Hair Styling"];
+const RECUR = {
+  none:    { label: "One-time",       rrule: null },
+  weekly:  { label: "Every week",     rrule: "FREQ=WEEKLY" },
+  biweekly:{ label: "Every 2 weeks",  rrule: "FREQ=WEEKLY;INTERVAL=2" },
+  monthly: { label: "Every month",    rrule: "FREQ=MONTHLY" },
+};
+// Maps a booking service label to the key used in a pet profile's typical-time fields
+const SERVICE_TIME_KEY = { "Shower": "shower", "Hair Clipping": "clipping", "Hair Styling": "styling" };
+// Palette offered when creating/editing a groomer — the full set of Google Calendar
+// event colors (exact hexes), so a groomer's swatch here matches their events later.
+const GROOMER_COLORS = [
+  { name: "Tomato",    color: "#d50000", calendarColorId: "11" },
+  { name: "Tangerine", color: "#f4511e", calendarColorId: "6"  },
+  { name: "Banana",    color: "#f6bf26", calendarColorId: "5"  }, // yellow
+  { name: "Sage",      color: "#33b679", calendarColorId: "2"  },
+  { name: "Basil",     color: "#0b8043", calendarColorId: "10" },
+  { name: "Peacock",   color: "#039be5", calendarColorId: "7"  },
+  { name: "Blueberry", color: "#3f51b5", calendarColorId: "9"  },
+  { name: "Lavender",  color: "#7986cb", calendarColorId: "1"  },
+  { name: "Grape",     color: "#8e24aa", calendarColorId: "3"  },
+  { name: "Flamingo",  color: "#e67c73", calendarColorId: "4"  },
+  { name: "Graphite",  color: "#616161", calendarColorId: "8"  },
+];
+
+/* ---------- state ---------- */
+const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], search: { name: "", breed: "" } };
+
+/* ---------- tiny DOM helpers ---------- */
+const $  = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg; t.hidden = false;
+  clearTimeout(t._t); t._t = setTimeout(() => (t.hidden = true), 2200);
+}
+
+// Derives the Firebase Auth login email an admin's name maps to. "Owner" always
+// maps to the bootstrap account set up manually in the Firebase Console.
+function emailForName(name) {
+  const n = name.trim().toLowerCase();
+  if (n === "owner") return SHOP_LOGIN_EMAIL;
+  const slug = n.replace(/[^a-z0-9]+/g, "-").replace(/(^-+|-+$)/g, "");
+  return `${slug}@pawfect.local`;
+}
+
+/* ---------- date helpers ---------- */
+function fmtDate(d) { return new Date(d).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }); }
+function fmtTime(d) { return new Date(d).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }); }
+function startOfToday() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
+
+// Next occurrence >= today for a (possibly recurring) booking.
+// Returns null once a "repeat until" date exists and the series has ended.
+function nextOccurrence(b) {
+  const first = new Date(b.start);
+  const today = startOfToday();
+  const until = b.recurrenceUntil ? new Date(b.recurrenceUntil + "T23:59:59") : null;
+  if (until && first > until) return null;
+  if (first >= today || b.recurrence === "none" || !b.recurrence) return first;
+  const d = new Date(first);
+  const guard = 400;
+  for (let i = 0; i < guard; i++) {
+    if (d >= today) return d;
+    if (b.recurrence === "weekly") d.setDate(d.getDate() + 7);
+    else if (b.recurrence === "biweekly") d.setDate(d.getDate() + 14);
+    else if (b.recurrence === "monthly") d.setMonth(d.getMonth() + 1);
+    else return first;
+    if (until && d > until) return null;
+  }
+  return d;
+}
+function bookingDurationHours(b) {
+  if (!b.serviceHours) return 0;
+  const sum = Object.values(b.serviceHours).reduce((a, v) => a + (Number(v) || 0), 0);
+  return Math.round(sum * 100) / 100;
+}
+
+/* ---------- lookups ---------- */
+const groomerById = (id) => state.groomers.find((g) => g.id === id);
+function groomerColor(id) { const g = groomerById(id); return g ? g.color : "#c3c8d4"; }
+function groomerName(id) { const g = groomerById(id); return g ? g.name : "Unassigned"; }
+function findMatchingPets(query, limit = 6) {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  return state.pets
+    .filter((p) => p.name.toLowerCase().includes(q))
+    .sort((a, b) => a.name.toLowerCase().indexOf(q) - b.name.toLowerCase().indexOf(q))
+    .slice(0, limit);
+}
+function minToHr(min) { return min == null ? null : Math.round((min / 60) * 100) / 100; }
+
+/* ---------- image resize ---------- */
+function fileToResizedDataURL(file, max = 640) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > height && width > max) { height = height * (max / width); width = max; }
+        else if (height > max) { width = width * (max / height); height = max; }
+        const c = document.createElement("canvas");
+        c.width = width; c.height = height;
+        c.getContext("2d").drawImage(img, 0, 0, width, height);
+        resolve(c.toDataURL("image/jpeg", 0.85));
+      };
+      img.onerror = reject;
+      img.src = reader.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+/* ===================================================================
+   RENDER
+=================================================================== */
+// Optimistic local patch so the UI updates instantly after a write, without
+// waiting on the Firestore round-trip. DB.watch() reconciles state shortly
+// after anyway (and is what carries changes made from *other* devices).
+function upsertLocal(name, rec) {
+  const idx = state[name].findIndex((x) => x.id === rec.id);
+  if (idx >= 0) state[name][idx] = rec; else state[name].push(rec);
+}
+function removeLocal(name, id) {
+  state[name] = state[name].filter((x) => x.id !== id);
+}
+
+function render() {
+  $$(".nav-btn").forEach((b) => b.classList.toggle("active", b.dataset.nav === state.view));
+  const v = $("#view");
+  if (state.view === "home") v.innerHTML = viewHome();
+  else if (state.view === "pets") v.innerHTML = viewPets();
+  else if (state.view === "pet") v.innerHTML = viewPetDetail();
+  else if (state.view === "bookings") v.innerHTML = viewBookings();
+  else if (state.view === "groomers") v.innerHTML = viewGroomers();
+  else if (state.view === "admins") v.innerHTML = viewAdmins();
+  bindView();
+  window.scrollTo({ top: 0 });
+}
+
+function go(view, petId = null) { state.view = view; state.petId = petId; render(); }
+
+/* ---------- HOME ---------- */
+function viewHome() {
+  const results = filteredPets();
+  const searching = state.search.name || state.search.breed;
+  const upcoming = upcomingBookings(6);
+
+  return `
+  <div class="page-head">
+    <div><h1>Welcome back 🐾</h1><div class="muted">Find a pet, take a booking, manage your team.</div></div>
+    <button class="btn primary" data-action="new-booking">＋ New Booking</button>
+  </div>
+
+  <div class="card pad" style="margin-bottom:16px">
+    <h3 class="section-title">Search pets</h3>
+    <div class="searchbar">
+      <input id="q-name"  placeholder="Name (e.g. Milo)"        value="${esc(state.search.name)}">
+      <input id="q-breed" placeholder="Breed (e.g. Poodle)"     value="${esc(state.search.breed)}">
+      <button class="btn" data-action="clear-search">Clear</button>
+    </div>
+    ${searching ? `
+      <div class="divider"></div>
+      <div class="muted" style="margin-bottom:12px">${results.length} match${results.length === 1 ? "" : "es"}</div>
+      <div class="grid pets">${results.map(petCard).join("") || emptyInline("No pets match that search.")}</div>
+    ` : ""}
+  </div>
+
+  <div class="grid home">
+    <div class="card pad">
+      <div class="spread" style="margin-bottom:6px">
+        <h3 class="section-title" style="margin:0">Upcoming bookings</h3>
+        <button class="link" data-nav="bookings">View all</button>
+      </div>
+      ${upcoming.length ? upcoming.map(bookingRow).join("") : emptyInline("No upcoming bookings yet.")}
+    </div>
+
+    <div class="stack" style="gap:16px">
+      <div class="card pad">
+        <h3 class="section-title">Quick actions</h3>
+        <div class="stack" style="gap:10px">
+          <button class="btn block" data-action="new-pet">＋ Add a pet profile</button>
+          <button class="btn block" data-action="new-booking">＋ New booking</button>
+        </div>
+      </div>
+      <div class="card pad">
+        <div class="spread"><h3 class="section-title" style="margin:0">Groomers</h3>
+          <button class="link" data-nav="groomers">Manage</button></div>
+        <div class="stack" style="gap:10px; margin-top:10px">
+          ${state.groomers.map((g) => `
+            <div class="row"><span class="dot" style="background:${g.color}"></span><strong>${esc(g.name)}</strong></div>
+          `).join("") || emptyInline("No groomers yet.")}
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ---------- PETS LIST ---------- */
+function viewPets() {
+  const pets = [...state.pets].sort((a, b) => a.name.localeCompare(b.name));
+  return `
+  <div class="page-head">
+    <h1>Pets <span class="faint" style="font-weight:600">(${pets.length})</span></h1>
+    <button class="btn primary" data-action="new-pet">＋ Add pet</button>
+  </div>
+  ${pets.length ? `<div class="grid pets">${pets.map(petCard).join("")}</div>`
+    : emptyBlock("🐾", "No pet profiles yet", "Add your first furry client to get started.", "new-pet", "Add a pet")}`;
+}
+
+function petCard(p) {
+  const photo = p.photo ? `style="background-image:url('${p.photo}')"` : "";
+  return `
+  <div class="card pet-card" data-open-pet="${p.id}">
+    <div class="photo" ${photo}><span class="species">${SPECIES[p.species] || "🐾"}</span></div>
+    <div class="body">
+      <p class="name">${esc(p.name)}</p>
+      <div class="breed">${esc(p.breed || "Unknown breed")}</div>
+      <div class="meta">
+        <span class="dot" style="background:${groomerColor(p.groomerId)}"></span>${esc(groomerName(p.groomerId))}
+        ${p.weight ? `· ${esc(p.weight)} kg` : ""}
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ---------- PET DETAIL ---------- */
+function viewPetDetail() {
+  const p = state.pets.find((x) => x.id === state.petId);
+  if (!p) return emptyBlock("🐾", "Pet not found", "", "go-pets", "Back to pets");
+  const t = p.times || {};
+  const history = [...(p.history || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const photo = p.photo ? `style="background-image:url('${p.photo}')"` : "";
+
+  return `
+  <button class="btn ghost sm" data-nav="pets">← All pets</button>
+  <div class="card pad" style="margin-top:12px">
+    <div class="row" style="align-items:flex-start; gap:22px">
+      <div class="avatar" ${photo}>${p.photo ? "" : SPECIES[p.species] || "🐾"}</div>
+      <div class="grow">
+        <div class="spread">
+          <div>
+            <h1 style="margin:0 0 2px">${esc(p.name)} <span style="font-size:22px">${SPECIES[p.species] || ""}</span></h1>
+            <div class="muted">${esc(p.breed || "Unknown breed")}${p.weight ? ` · ${esc(p.weight)} kg` : ""}</div>
+            <div class="groomer-tag" style="margin-top:8px"><span class="dot" style="background:${groomerColor(p.groomerId)}"></span>${esc(groomerName(p.groomerId))}</div>
+          </div>
+          <div class="row">
+            <button class="btn sm" data-action="edit-pet" data-id="${p.id}">Edit</button>
+            <button class="btn sm primary" data-action="book-pet" data-id="${p.id}">Book</button>
+          </div>
+        </div>
+        <div class="divider"></div>
+        <h3 class="section-title">Typical time consumed</h3>
+        <div class="time-pills">
+          <span class="time-pill">🚿 Shower · ${t.shower ? t.shower + " min" : "—"}</span>
+          <span class="time-pill">✂️ Clipping · ${t.clipping ? t.clipping + " min" : "—"}</span>
+          <span class="time-pill">💈 Styling · ${t.styling ? t.styling + " min" : "—"}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card pad" style="margin-top:16px">
+    <div class="spread"><h3 class="section-title" style="margin:0">Service history</h3>
+      <button class="btn sm" data-action="add-history" data-id="${p.id}">＋ Add record</button></div>
+    <div style="margin-top:8px">
+      ${history.length ? history.map((h, i) => `
+        <div class="history-item">
+          <div class="h-date">${fmtDate(h.date)}</div>
+          <div class="h-body">
+            <div class="row spread">
+              <div><strong>${(h.services || []).map(esc).join(", ") || "Service"}</strong>
+                <span class="groomer-tag" style="margin-left:8px"><span class="dot" style="background:${groomerColor(h.groomerId)}"></span>${esc(groomerName(h.groomerId))}</span></div>
+              <button class="icon-btn" data-action="del-history" data-id="${p.id}" data-idx="${i}" title="Delete">🗑</button>
+            </div>
+            ${h.notes ? `<div class="muted" style="font-size:13px; margin-top:4px">${esc(h.notes)}</div>` : ""}
+          </div>
+        </div>`).join("")
+        : emptyInline("No service records yet.")}
+    </div>
+  </div>`;
+}
+
+/* ---------- BOOKINGS ---------- */
+function viewBookings() {
+  const list = [...state.bookings].sort((a, b) => {
+    const wa = nextOccurrence(a), wb = nextOccurrence(b);
+    if (wa === null && wb === null) return new Date(b.start) - new Date(a.start);
+    if (wa === null) return 1;
+    if (wb === null) return -1;
+    return wa - wb;
+  });
+  return `
+  <div class="page-head">
+    <h1>Bookings <span class="faint" style="font-weight:600">(${list.length})</span></h1>
+    <button class="btn primary" data-action="new-booking">＋ New booking</button>
+  </div>
+  ${list.length ? `<div class="card">${list.map(bookingRow).join("")}</div>`
+    : emptyBlock("📅", "No bookings yet", "Create a booking — it's ready to sync to Google Calendar later.", "new-booking", "New booking")}`;
+}
+
+function bookingRow(b) {
+  const when = nextOccurrence(b);
+  const ended = when === null;
+  const shown = when || new Date(b.start);
+  const recur = RECUR[b.recurrence] || RECUR.none;
+  const svcText = (b.services && b.services.length)
+    ? b.services.map((s) => `${esc(s)}${b.serviceHours && b.serviceHours[s] ? ` (${b.serviceHours[s]}h)` : ""}`).join(", ")
+    : "";
+  const total = bookingDurationHours(b);
+  return `
+  <div class="booking">
+    <div class="stripe" style="background:${groomerColor(b.groomerId)}"></div>
+    <div class="when"><div class="date">${fmtDate(shown)}</div><div class="time">${ended ? "Series ended" : fmtTime(shown)}</div></div>
+    <div class="who">
+      <div class="pet">${esc(b.petName)}${b.breed ? ` · <span class="muted" style="font-weight:500">${esc(b.breed)}</span>` : ""}</div>
+      <div class="sub">
+        <span class="groomer-tag"><span class="dot" style="background:${groomerColor(b.groomerId)}"></span>${esc(groomerName(b.groomerId))}</span>
+        ${svcText ? " · " + svcText : ""}
+        ${total ? ` · ${total}h total` : ""}
+        ${b.recurrence && b.recurrence !== "none" ? ` <span class="recur-badge">${recur.label}${b.recurrenceUntil ? ` until ${fmtDate(b.recurrenceUntil)}` : ""}</span>` : ""}
+      </div>
+    </div>
+    <button class="btn sm" data-action="edit-booking" data-id="${b.id}">Edit</button>
+    <button class="icon-btn" data-action="del-booking" data-id="${b.id}" title="Delete">🗑</button>
+  </div>`;
+}
+
+/* ---------- GROOMERS ---------- */
+function viewGroomers() {
+  return `
+  <div class="page-head">
+    <h1>Groomers</h1>
+    <button class="btn primary" data-action="new-groomer">＋ Add groomer</button>
+  </div>
+  <div class="card pad">
+    <div class="muted" style="margin-bottom:6px">Each groomer's color is used on bookings and (later) on Google Calendar.</div>
+    ${state.groomers.map((g) => {
+      const count = state.bookings.filter((b) => b.groomerId === g.id).length;
+      return `
+      <div class="groomer-row">
+        <span class="swatch" style="background:${g.color}"></span>
+        <div class="grow"><strong>${esc(g.name)}</strong>
+          <div class="faint" style="font-size:12px">${count} booking${count === 1 ? "" : "s"}</div></div>
+        <button class="btn sm" data-action="edit-groomer" data-id="${g.id}">Edit</button>
+        <button class="btn sm danger" data-action="del-groomer" data-id="${g.id}">Remove</button>
+      </div>`;
+    }).join("") || emptyInline("No groomers yet.")}
+  </div>`;
+}
+
+/* ---------- ADMINS ---------- */
+function viewAdmins() {
+  const myUid = DB.currentUid();
+  return `
+  <div class="page-head">
+    <h1>Admins</h1>
+    <button class="btn primary" data-action="new-admin">＋ Add admin</button>
+  </div>
+  <div class="card pad">
+    <div class="muted" style="margin-bottom:6px">Each admin signs in with their own name + PIN. Removing an admin here revokes their access immediately.</div>
+    <div class="groomer-row">
+      <span class="swatch" style="background:var(--brand)"></span>
+      <div class="grow"><strong>Owner</strong>${DB.currentEmail() === SHOP_LOGIN_EMAIL ? ' <span class="chip">you</span>' : ""}
+        <div class="faint" style="font-size:12px">Master account, set up in the Firebase Console</div></div>
+    </div>
+    ${state.admins.map((a) => `
+      <div class="groomer-row">
+        <span class="swatch" style="background:var(--brand)"></span>
+        <div class="grow"><strong>${esc(a.name)}</strong>${a.uid === myUid ? ' <span class="chip">you</span>' : ""}
+          <div class="faint" style="font-size:12px">${esc(a.email)}</div></div>
+        <button class="btn sm danger" data-action="del-admin" data-id="${a.uid}" ${a.uid === myUid ? "disabled" : ""}>Remove</button>
+      </div>`).join("") || emptyInline("No additional admins yet.")}
+  </div>`;
+}
+
+/* ---------- shared empty states ---------- */
+function emptyInline(msg) { return `<div class="empty">${esc(msg)}</div>`; }
+function emptyBlock(icon, title, sub, action, label) {
+  return `<div class="card pad empty"><div class="big">${icon}</div>
+    <h3 style="margin:0 0 4px">${esc(title)}</h3>
+    <div class="muted" style="margin-bottom:16px">${esc(sub)}</div>
+    ${action ? `<button class="btn primary" data-action="${action}">${esc(label)}</button>` : ""}</div>`;
+}
+
+/* ---------- filtering ---------- */
+function filteredPets() {
+  const n = state.search.name.trim().toLowerCase();
+  const br = state.search.breed.trim().toLowerCase();
+  return state.pets.filter((p) =>
+    (!n || (p.name || "").toLowerCase().includes(n)) &&
+    (!br || (p.breed || "").toLowerCase().includes(br)));
+}
+function upcomingBookings(limit) {
+  const today = startOfToday();
+  return state.bookings
+    .map((b) => ({ b, when: nextOccurrence(b) }))
+    .filter((x) => x.when && x.when >= today)
+    .sort((a, b) => a.when - b.when)
+    .slice(0, limit)
+    .map((x) => x.b);
+}
+
+/* ===================================================================
+   MODALS
+=================================================================== */
+const modalHost = () => $("#modal-host");
+function openModal(html) { $("#modal-body").innerHTML = html; modalHost().hidden = false; }
+function closeModal() { modalHost().hidden = true; $("#modal-body").innerHTML = ""; }
+
+/* ---------- Pet editor ---------- */
+function petEditorModal(pet) {
+  const p = pet || { species: "dog", times: {} };
+  const t = p.times || {};
+  const opt = (val, cur, label) => `<option value="${val}" ${cur === val ? "selected" : ""}>${label}</option>`;
+  openModal(`
+    <h2>${pet ? "Edit pet" : "New pet profile"}</h2>
+    <div class="muted" style="margin-bottom:16px">Photo, details and typical grooming times.</div>
+    <div class="row" style="align-items:center; gap:18px; margin-bottom:16px">
+      <div class="avatar" id="pet-avatar" ${p.photo ? `style="background-image:url('${p.photo}')"` : ""}>${p.photo ? "" : "📷"}</div>
+      <div class="stack">
+        <button class="btn sm" id="pick-photo">Upload photo</button>
+        ${p.photo ? `<button class="btn sm ghost" id="clear-photo">Remove</button>` : ""}
+        <div class="help">JPG/PNG, auto-resized.</div>
+      </div>
+      <input type="file" id="photo-input" accept="image/*" hidden>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Name</label><input id="f-name" value="${esc(p.name || "")}" placeholder="Milo"></div>
+      <div class="field"><label>Species</label><select id="f-species">${opt("dog", p.species, "🐶 Dog")}${opt("cat", p.species, "🐱 Cat")}</select></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Breed</label><input id="f-breed" value="${esc(p.breed || "")}" placeholder="Poodle"></div>
+      <div class="field"><label>Weight (kg)</label><input id="f-weight" type="number" step="0.1" value="${esc(p.weight || "")}" placeholder="8.5"></div>
+    </div>
+    <div class="field"><label>Assigned groomer</label>
+      <select id="f-groomer"><option value="">— Unassigned —</option>
+        ${state.groomers.map((g) => `<option value="${g.id}" ${p.groomerId === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}
+      </select></div>
+    <h3 class="section-title" style="margin-top:6px">Typical time consumed (minutes)</h3>
+    <div class="field-row three">
+      <div class="field"><label>🚿 Shower</label><input id="f-shower" type="number" min="0" value="${esc(t.shower || "")}"></div>
+      <div class="field"><label>✂️ Clipping</label><input id="f-clipping" type="number" min="0" value="${esc(t.clipping || "")}"></div>
+      <div class="field"><label>💈 Styling</label><input id="f-styling" type="number" min="0" value="${esc(t.styling || "")}"></div>
+    </div>
+    <div class="row spread" style="margin-top:12px">
+      ${pet ? `<button class="btn danger" data-action="del-pet" data-id="${p.id}">Delete pet</button>` : "<span></span>"}
+      <div class="row"><button class="btn" data-close-modal>Cancel</button>
+      <button class="btn primary" id="save-pet">Save</button></div>
+    </div>`);
+
+  // photo pick
+  let photoData = p.photo || null;
+  const avatar = $("#pet-avatar");
+  $("#pick-photo").onclick = () => $("#photo-input").click();
+  $("#photo-input").onchange = async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    photoData = await fileToResizedDataURL(file);
+    avatar.style.backgroundImage = `url('${photoData}')`; avatar.textContent = "";
+  };
+  if ($("#clear-photo")) $("#clear-photo").onclick = () => { photoData = null; avatar.style.backgroundImage = ""; avatar.textContent = "📷"; };
+
+  $("#save-pet").onclick = async () => {
+    const name = $("#f-name").value.trim();
+    if (!name) { toast("Please enter a name"); return; }
+    const rec = {
+      id: p.id || DB.uid("pet"),
+      createdAt: p.createdAt || Date.now(),
+      photo: photoData,
+      name,
+      species: $("#f-species").value,
+      breed: $("#f-breed").value.trim(),
+      weight: $("#f-weight").value.trim(),
+      groomerId: $("#f-groomer").value || null,
+      times: {
+        shower: numOrNull($("#f-shower").value),
+        clipping: numOrNull($("#f-clipping").value),
+        styling: numOrNull($("#f-styling").value),
+      },
+      history: p.history || [],
+    };
+    await DB.put("pets", rec);
+    upsertLocal("pets", rec);
+    closeModal();
+    toast(pet ? "Pet updated" : "Pet added");
+    go("pet", rec.id);
+  };
+}
+const numOrNull = (v) => (v === "" || v == null ? null : Number(v));
+
+/* ---------- Add service-history record ---------- */
+function historyModal(pet) {
+  const today = new Date().toISOString().slice(0, 10);
+  openModal(`
+    <h2>Add service record</h2>
+    <div class="muted" style="margin-bottom:16px">${esc(pet.name)}</div>
+    <div class="field-row">
+      <div class="field"><label>Date</label><input id="h-date" type="date" value="${today}"></div>
+      <div class="field"><label>Groomer</label>
+        <select id="h-groomer">${state.groomers.map((g) => `<option value="${g.id}" ${pet.groomerId === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select></div>
+    </div>
+    <div class="field"><label>Services</label>
+      <div class="tag-list">${SERVICES.map((s) => `<label class="chip"><input type="checkbox" class="h-svc" value="${s}"> ${s}</label>`).join("")}</div></div>
+    <div class="field"><label>Notes</label><textarea id="h-notes" placeholder="Coat condition, behavior, products used…"></textarea></div>
+    <div class="row" style="justify-content:flex-end; margin-top:8px">
+      <button class="btn" data-close-modal>Cancel</button>
+      <button class="btn primary" id="save-history">Save record</button>
+    </div>`);
+  $("#save-history").onclick = async () => {
+    const rec = {
+      date: $("#h-date").value || new Date().toISOString().slice(0, 10),
+      groomerId: $("#h-groomer").value || null,
+      services: $$(".h-svc").filter((c) => c.checked).map((c) => c.value),
+      notes: $("#h-notes").value.trim(),
+    };
+    pet.history = pet.history || [];
+    pet.history.push(rec);
+    await DB.put("pets", pet);
+    upsertLocal("pets", pet);
+    closeModal(); toast("Record added"); render();
+  };
+}
+
+/* ---------- Booking editor ---------- */
+function bookingModal(booking, prefillPet) {
+  const b = booking || {};
+  const now = new Date(Date.now() + 60 * 60 * 1000); now.setMinutes(0, 0, 0);
+  const startVal = b.start ? toLocalInput(b.start) : toLocalInput(now);
+
+  // Resolve the initial matched pet: editing an existing booking, or opened via "Book" on a pet profile
+  let matchedPet = prefillPet || (b.petId ? state.pets.find((p) => p.id === b.petId) : null) || null;
+  let isNewPet = false;
+  let newPetPhoto = null;
+  const touchedHours = {}; // service label -> true once the user has hand-edited its hour field
+
+  const initialName = b.petName || (matchedPet ? matchedPet.name : "");
+  const initialBreed = b.breed || (matchedPet ? matchedPet.breed : "");
+  const initialGroomer = b.groomerId || (matchedPet ? matchedPet.groomerId : "") || "";
+  const initialServices = b.services || [];
+  const initialHours = b.serviceHours || {};
+
+  openModal(`
+    <h2>${booking ? "Edit booking" : "New booking"}</h2>
+    <div class="muted" style="margin-bottom:16px">Appears on Google Calendar later with the groomer's color.</div>
+
+    <div class="row" style="align-items:flex-start; gap:16px; margin-bottom:6px">
+      <div class="mini-avatar" id="bk-avatar">🐾</div>
+      <div class="grow" style="position:relative">
+        <div class="field" style="margin-bottom:0">
+          <label>Pet name</label>
+          <input id="b-pet" autocomplete="off" value="${esc(initialName)}" placeholder="Type a pet name…">
+        </div>
+        <div id="pet-suggest" class="suggest-list" hidden></div>
+        <div class="help" id="pet-status" style="margin-top:6px"></div>
+      </div>
+    </div>
+
+    <div id="new-pet-box" class="card pad" style="margin:10px 0; background:var(--surface-2); border-style:dashed" hidden>
+      <div class="spread" style="margin-bottom:8px"><strong>New pet profile</strong>
+        <span class="faint" style="font-size:12px">Created together with this booking</span></div>
+      <div class="field-row">
+        <div class="field"><label>Species</label>
+          <select id="np-species"><option value="dog">🐶 Dog</option><option value="cat">🐱 Cat</option></select></div>
+        <div class="field"><label>Weight (kg)</label><input id="np-weight" type="number" step="0.1" placeholder="8.5"></div>
+      </div>
+      <button class="btn sm" id="np-photo-btn" type="button">Upload photo</button>
+      <input type="file" id="np-photo-input" accept="image/*" hidden>
+    </div>
+
+    <div class="field-row">
+      <div class="field"><label>Breed</label><input id="b-breed" value="${esc(initialBreed)}" placeholder="Poodle"></div>
+      <div class="field"><label>Groomer</label>
+        <select id="b-groomer"><option value="">— Choose —</option>
+          ${state.groomers.map((g) => `<option value="${g.id}" ${initialGroomer === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Date & time</label><input id="b-start" type="datetime-local" value="${startVal}"></div>
+      <div class="field"><label>Repeat</label>
+        <select id="b-recur">${Object.entries(RECUR).map(([k, v]) => `<option value="${k}" ${(b.recurrence || "none") === k ? "selected" : ""}>${v.label}</option>`).join("")}</select></div>
+    </div>
+    <div class="field" id="b-until-field" ${(b.recurrence && b.recurrence !== "none") ? "" : "hidden"}>
+      <label>Period — repeat until</label>
+      <input id="b-until" type="date" value="${esc(b.recurrenceUntil || "")}">
+      <div class="help">Leave blank to repeat with no set end date.</div>
+    </div>
+
+    <div class="field"><label>Services &amp; time (hours) — shown on Google Calendar</label>
+      <div class="stack" style="gap:8px">
+        ${SERVICES.map((s) => `
+          <div class="row">
+            <label class="chip" style="min-width:150px"><input type="checkbox" class="b-svc" data-svc="${esc(s)}" ${initialServices.includes(s) ? "checked" : ""}> ${s}</label>
+            <input type="number" class="b-hr" data-svc="${esc(s)}" min="0" step="0.25" placeholder="hrs"
+              value="${esc(initialHours[s] ?? "")}" style="width:90px" ${initialServices.includes(s) ? "" : "disabled"}>
+          </div>`).join("")}
+      </div>
+      <div class="help" id="duration-total" style="margin-top:6px"></div>
+    </div>
+
+    <div class="field"><label>Notes</label><textarea id="b-notes" placeholder="Anything the groomer should know…">${esc(b.notes || "")}</textarea></div>
+    <div class="row" style="justify-content:flex-end; margin-top:8px">
+      <button class="btn" data-close-modal>Cancel</button>
+      <button class="btn primary" id="save-booking">${booking ? "Save" : "Create booking"}</button>
+    </div>`);
+
+  const avatarEl = $("#bk-avatar");
+  const petInput = $("#b-pet");
+  const suggestBox = $("#pet-suggest");
+  const statusEl = $("#pet-status");
+  const newPetBox = $("#new-pet-box");
+
+  function paintAvatar() {
+    if (matchedPet && matchedPet.photo) { avatarEl.style.backgroundImage = `url('${matchedPet.photo}')`; avatarEl.textContent = ""; }
+    else if (isNewPet && newPetPhoto) { avatarEl.style.backgroundImage = `url('${newPetPhoto}')`; avatarEl.textContent = ""; }
+    else if (isNewPet) { avatarEl.style.backgroundImage = ""; avatarEl.textContent = "📷"; }
+    else if (matchedPet) { avatarEl.style.backgroundImage = ""; avatarEl.textContent = SPECIES[matchedPet.species] || "🐾"; }
+    else { avatarEl.style.backgroundImage = ""; avatarEl.textContent = "🐾"; }
+  }
+  function paintStatus() {
+    if (matchedPet) statusEl.innerHTML = `Existing pet selected · <button class="link" id="unmatch-pet" type="button">not this pet?</button>`;
+    else if (isNewPet) statusEl.innerHTML = `Creating a new pet profile · <button class="link" id="unmatch-pet" type="button">search instead</button>`;
+    else statusEl.textContent = "Start typing to find an existing pet, or add a new one.";
+    const um = $("#unmatch-pet");
+    if (um) um.onclick = () => { matchedPet = null; isNewPet = false; newPetBox.hidden = true; paintAvatar(); paintStatus(); petInput.focus(); };
+  }
+  function applyMatch(pet) {
+    matchedPet = pet; isNewPet = false; newPetBox.hidden = true;
+    petInput.value = pet.name;
+    if (pet.breed) $("#b-breed").value = pet.breed;
+    if (pet.groomerId) $("#b-groomer").value = pet.groomerId;
+    suggestBox.hidden = true; suggestBox.innerHTML = "";
+    paintAvatar(); paintStatus();
+    prefillHoursFromPet();
+  }
+  function startNewPet() {
+    matchedPet = null; isNewPet = true; newPetBox.hidden = false;
+    suggestBox.hidden = true; suggestBox.innerHTML = "";
+    paintAvatar(); paintStatus();
+  }
+  function renderSuggestions() {
+    const q = petInput.value;
+    if (matchedPet && q.trim().toLowerCase() === matchedPet.name.toLowerCase()) { suggestBox.hidden = true; return; }
+    if (!q.trim()) { suggestBox.hidden = true; return; }
+    const matches = findMatchingPets(q);
+    const items = matches.map((p) => `
+      <div class="suggest-item" data-pet-id="${p.id}">
+        <div class="s-photo" ${p.photo ? `style="background-image:url('${p.photo}')"` : ""}>${p.photo ? "" : (SPECIES[p.species] || "🐾")}</div>
+        <div class="s-info"><div class="s-name">${esc(p.name)}</div><div class="s-breed">${esc(p.breed || "—")}</div></div>
+      </div>`).join("");
+    const createItem = `<div class="suggest-item create" data-create="1">＋ Create new pet "${esc(q.trim())}"</div>`;
+    suggestBox.innerHTML = items + createItem;
+    suggestBox.hidden = false;
+    $$(".suggest-item[data-pet-id]", suggestBox).forEach((el) => el.onclick = () => applyMatch(state.pets.find((p) => p.id === el.dataset.petId)));
+    const createEl = suggestBox.querySelector(".suggest-item.create");
+    if (createEl) createEl.onclick = startNewPet;
+  }
+  function prefillHoursFromPet() {
+    if (!matchedPet) return;
+    $$(".b-svc").forEach((cb) => {
+      if (!cb.checked) return;
+      const svc = cb.dataset.svc;
+      if (touchedHours[svc]) return;
+      const hrInput = $(`.b-hr[data-svc="${svc}"]`);
+      const min = matchedPet.times && matchedPet.times[SERVICE_TIME_KEY[svc]];
+      if (min != null && hrInput && !hrInput.value) hrInput.value = minToHr(min);
+    });
+    updateTotal();
+  }
+  function updateTotal() {
+    let sum = 0;
+    $$(".b-svc").forEach((cb) => { if (cb.checked) sum += Number($(`.b-hr[data-svc="${cb.dataset.svc}"]`).value) || 0; });
+    $("#duration-total").textContent = sum ? `Total on calendar: ${Math.round(sum * 100) / 100} hr` : "Enter hours for each selected service.";
+  }
+
+  petInput.addEventListener("input", () => {
+    if (matchedPet && petInput.value !== matchedPet.name) matchedPet = null;
+    if (isNewPet) { isNewPet = false; newPetBox.hidden = true; }
+    paintAvatar(); paintStatus(); renderSuggestions();
+  });
+  petInput.addEventListener("focus", renderSuggestions);
+
+  $$(".b-svc").forEach((cb) => cb.addEventListener("change", () => {
+    const svc = cb.dataset.svc;
+    const hrInput = $(`.b-hr[data-svc="${svc}"]`);
+    hrInput.disabled = !cb.checked;
+    if (cb.checked) prefillHoursFromPet(); else { hrInput.value = ""; delete touchedHours[svc]; }
+    updateTotal();
+  }));
+  $$(".b-hr").forEach((inp) => inp.addEventListener("input", () => { touchedHours[inp.dataset.svc] = true; updateTotal(); }));
+
+  $("#b-recur").addEventListener("change", () => { $("#b-until-field").hidden = $("#b-recur").value === "none"; });
+
+  $("#np-photo-btn").onclick = () => $("#np-photo-input").click();
+  $("#np-photo-input").onchange = async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    newPetPhoto = await fileToResizedDataURL(file);
+    paintAvatar();
+  };
+
+  paintAvatar(); paintStatus();
+  if (matchedPet) prefillHoursFromPet(); else updateTotal();
+
+  $("#save-booking").onclick = async () => {
+    const petName = petInput.value.trim();
+    if (!petName) { toast("Please enter a pet"); return; }
+    if (!$("#b-groomer").value) { toast("Please choose a groomer"); return; }
+    const checkedServices = $$(".b-svc").filter((c) => c.checked);
+    if (checkedServices.length === 0) { toast("Please select at least one service"); return; }
+    for (const cb of checkedServices) {
+      const hrInput = $(`.b-hr[data-svc="${cb.dataset.svc}"]`);
+      if (!hrInput.value || Number(hrInput.value) <= 0) { toast(`Please enter hours for ${cb.dataset.svc}`); hrInput.focus(); return; }
+    }
+
+    const groomerId = $("#b-groomer").value;
+    const breed = $("#b-breed").value.trim();
+    let petId = matchedPet ? matchedPet.id : null;
+
+    if (!matchedPet) {
+      const times = {};
+      checkedServices.forEach((cb) => {
+        const hrs = Number($(`.b-hr[data-svc="${cb.dataset.svc}"]`).value) || 0;
+        times[SERVICE_TIME_KEY[cb.dataset.svc]] = Math.round(hrs * 60);
+      });
+      const newPet = {
+        id: DB.uid("pet"), createdAt: Date.now(),
+        photo: newPetPhoto, name: petName,
+        species: ($("#np-species") && $("#np-species").value) || "dog",
+        breed, weight: ($("#np-weight") && $("#np-weight").value.trim()) || "",
+        groomerId, times, history: [],
+      };
+      await DB.put("pets", newPet);
+      upsertLocal("pets", newPet);
+      petId = newPet.id;
+    }
+
+    const serviceHours = {};
+    checkedServices.forEach((cb) => { serviceHours[cb.dataset.svc] = Number($(`.b-hr[data-svc="${cb.dataset.svc}"]`).value) || 0; });
+
+    const recurrence = $("#b-recur").value;
+    const rec = {
+      id: b.id || DB.uid("bk"),
+      createdAt: b.createdAt || Date.now(),
+      petId, petName, breed, groomerId,
+      start: fromLocalInput($("#b-start").value),
+      recurrence,
+      recurrenceUntil: recurrence !== "none" ? ($("#b-until").value || null) : null,
+      services: checkedServices.map((c) => c.dataset.svc),
+      serviceHours,
+      notes: $("#b-notes").value.trim(),
+      calendarEventId: b.calendarEventId || null, // reserved for Google Calendar sync
+    };
+    await DB.put("bookings", rec);
+    upsertLocal("bookings", rec);
+    closeModal(); toast(booking ? "Booking updated" : "Booking created"); render();
+  };
+}
+function toLocalInput(d) {
+  const dt = new Date(d); const p = (n) => String(n).padStart(2, "0");
+  return `${dt.getFullYear()}-${p(dt.getMonth() + 1)}-${p(dt.getDate())}T${p(dt.getHours())}:${p(dt.getMinutes())}`;
+}
+function fromLocalInput(v) { return new Date(v).toISOString(); }
+
+/* ---------- Groomer editor ---------- */
+function groomerModal(groomer) {
+  const g = groomer || { color: GROOMER_COLORS[0].color, calendarColorId: GROOMER_COLORS[0].calendarColorId };
+  openModal(`
+    <h2>${groomer ? "Edit groomer" : "Add groomer"}</h2>
+    <div class="field"><label>Name</label><input id="g-name" value="${esc(g.name || "")}" placeholder="e.g. Nina"></div>
+    <div class="field"><label>Color</label>
+      <div class="color-pick" id="color-pick">
+        ${GROOMER_COLORS.map((c) => `<div class="color-opt ${c.color === g.color ? "sel" : ""}" data-color="${c.color}" data-cal="${c.calendarColorId}" style="background:${c.color}" title="${esc(c.name)}"></div>`).join("")}
+      </div>
+      <div class="help">Used on booking stripes and Google Calendar events.</div></div>
+    <div class="row" style="justify-content:flex-end; margin-top:8px">
+      <button class="btn" data-close-modal>Cancel</button>
+      <button class="btn primary" id="save-groomer">Save</button>
+    </div>`);
+  let color = g.color, cal = g.calendarColorId;
+  $$("#color-pick .color-opt").forEach((el) => el.onclick = () => {
+    $$("#color-pick .color-opt").forEach((x) => x.classList.remove("sel"));
+    el.classList.add("sel"); color = el.dataset.color; cal = el.dataset.cal;
+  });
+  $("#save-groomer").onclick = async () => {
+    const name = $("#g-name").value.trim();
+    if (!name) { toast("Please enter a name"); return; }
+    const rec = { id: g.id || DB.uid("grm"), createdAt: g.createdAt || Date.now(), name, color, calendarColorId: cal };
+    await DB.put("groomers", rec);
+    upsertLocal("groomers", rec);
+    closeModal(); toast(groomer ? "Groomer updated" : "Groomer added"); render();
+  };
+}
+
+/* ---------- Admin editor (create only — see viewAdmins for remove) ---------- */
+function adminModal() {
+  openModal(`
+    <h2>Add admin</h2>
+    <div class="muted" style="margin-bottom:16px">They'll sign in with this name and PIN from now on.</div>
+    <div class="field"><label>Name</label><input id="a-name" placeholder="e.g. Nina" autocomplete="off"></div>
+    <div class="field"><label>PIN</label><input id="a-pin" type="password" inputmode="numeric" placeholder="6+ characters" autocomplete="new-password"></div>
+    <div class="field"><label>Confirm PIN</label><input id="a-pin2" type="password" inputmode="numeric" placeholder="Repeat the PIN" autocomplete="new-password"></div>
+    <div class="help" id="admin-error" style="color:var(--danger); font-weight:600"></div>
+    <div class="row" style="justify-content:flex-end; margin-top:8px">
+      <button class="btn" data-close-modal>Cancel</button>
+      <button class="btn primary" id="save-admin">Add admin</button>
+    </div>`);
+
+  $("#save-admin").onclick = async () => {
+    const name = $("#a-name").value.trim();
+    const pin = $("#a-pin").value;
+    const pin2 = $("#a-pin2").value;
+    const errEl = $("#admin-error");
+    errEl.textContent = "";
+    if (!name) { errEl.textContent = "Please enter a name."; return; }
+    if (name.trim().toLowerCase() === "owner") { errEl.textContent = "\"Owner\" is reserved for the master account."; return; }
+    if (pin.length < 6) { errEl.textContent = "PIN must be at least 6 characters."; return; }
+    if (pin !== pin2) { errEl.textContent = "PINs don't match."; return; }
+
+    const btn = $("#save-admin");
+    btn.disabled = true; btn.textContent = "Adding…";
+    try {
+      const rec = await DB.createAdmin({ name, email: emailForName(name), pin });
+      upsertLocal("admins", rec);
+      closeModal(); toast("Admin added"); render();
+    } catch (err) {
+      errEl.textContent = err.code === "auth/email-already-in-use"
+        ? "That name is already taken — try a different one."
+        : `Couldn't add admin (${err.code || err.message}).`;
+      btn.disabled = false; btn.textContent = "Add admin";
+    }
+  };
+}
+
+/* ===================================================================
+   EVENT BINDING
+=================================================================== */
+function bindView() {
+  // navigation
+  $$("[data-nav]").forEach((el) => el.onclick = () => go(el.dataset.nav));
+  // open pet cards
+  $$("[data-open-pet]").forEach((el) => el.onclick = () => go("pet", el.dataset.openPet));
+
+  // live search on home
+  const qn = $("#q-name"), qb = $("#q-breed");
+  if (qn) qn.oninput = () => { state.search.name = qn.value; renderHomeResults(); };
+  if (qb) qb.oninput = () => { state.search.breed = qb.value; renderHomeResults(); };
+
+  // actions
+  $$("[data-action]").forEach((el) => el.onclick = () => handleAction(el.dataset.action, el.dataset));
+}
+
+// Re-render only home so the search inputs keep focus/caret
+function renderHomeResults() {
+  if (state.view !== "home") return;
+  const focused = document.activeElement && document.activeElement.id;
+  const selStart = focused ? document.activeElement.selectionStart : null;
+  render();
+  if (focused) { const el = $("#" + focused); if (el) { el.focus(); if (selStart != null) try { el.setSelectionRange(selStart, selStart); } catch (_) {} } }
+}
+
+async function handleAction(action, data) {
+  switch (action) {
+    case "new-pet": petEditorModal(null); break;
+    case "edit-pet": petEditorModal(state.pets.find((p) => p.id === data.id)); break;
+    case "del-pet":
+      if (confirm("Delete this pet profile? This cannot be undone.")) {
+        await DB.del("pets", data.id); removeLocal("pets", data.id); closeModal(); toast("Pet deleted"); go("pets");
+      } break;
+    case "add-history": historyModal(state.pets.find((p) => p.id === data.id)); break;
+    case "del-history": {
+      const pet = state.pets.find((p) => p.id === data.id);
+      pet.history.splice(Number(data.idx), 1);
+      await DB.put("pets", pet); upsertLocal("pets", pet); render();
+    } break;
+    case "new-booking": bookingModal(null); break;
+    case "book-pet": bookingModal(null, state.pets.find((p) => p.id === data.id)); break;
+    case "edit-booking": bookingModal(state.bookings.find((b) => b.id === data.id)); break;
+    case "del-booking":
+      if (confirm("Delete this booking?")) { await DB.del("bookings", data.id); removeLocal("bookings", data.id); toast("Booking deleted"); render(); }
+      break;
+    case "new-groomer": groomerModal(null); break;
+    case "edit-groomer": groomerModal(state.groomers.find((g) => g.id === data.id)); break;
+    case "del-groomer": {
+      const count = state.bookings.filter((b) => b.groomerId === data.id).length;
+      const msg = count ? `This groomer has ${count} booking(s). Remove anyway? Bookings stay but show as unassigned.` : "Remove this groomer?";
+      if (confirm(msg)) { await DB.del("groomers", data.id); removeLocal("groomers", data.id); toast("Groomer removed"); render(); }
+    } break;
+    case "new-admin": adminModal(); break;
+    case "del-admin":
+      if (data.id === DB.currentUid()) { toast("You can't remove yourself while signed in."); break; }
+      if (confirm("Remove this admin? They'll immediately lose access.")) {
+        await DB.removeAdmin(data.id); removeLocal("admins", data.id); toast("Admin removed"); render();
+      } break;
+    case "clear-search": state.search = { name: "", breed: "" }; render(); break;
+    case "go-pets": go("pets"); break;
+  }
+}
+
+/* ---------- global chrome (modal close, brand) ---------- */
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-close-modal]")) closeModal();
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+document.addEventListener("click", (e) => {
+  const box = document.getElementById("pet-suggest");
+  const input = document.getElementById("b-pet");
+  if (box && !box.hidden && e.target !== input && !box.contains(e.target)) box.hidden = true;
+});
+
+/* ===================================================================
+   AUTH GATE + BOOT
+=================================================================== */
+const COLLECTIONS = ["pets", "groomers", "bookings", "admins"];
+let watchers = [];
+
+function startWatchers() {
+  watchers = COLLECTIONS.map((name) =>
+    DB.watch(name, async (changed) => { state[changed] = await DB.getAll(changed); render(); })
+  );
+}
+function stopWatchers() {
+  watchers.forEach((unsub) => unsub && unsub());
+  watchers = [];
+}
+
+function showLoginError(msg) {
+  const el = $("#login-error");
+  el.textContent = msg; el.hidden = false;
+}
+
+$("#login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = $("#login-name").value.trim();
+  const pin = $("#login-pin").value.trim();
+  if (!name || !pin) return;
+  const btn = $("#login-btn");
+  btn.disabled = true; btn.textContent = "Checking…";
+  $("#login-error").hidden = true;
+  try {
+    await DB.login(emailForName(name), pin);
+  } catch (err) {
+    const wrongPin = ["auth/wrong-password", "auth/invalid-credential", "auth/user-not-found"].includes(err.code);
+    showLoginError(wrongPin ? "Incorrect name or PIN. Please try again."
+      : `Sign-in failed (${err.code || err.message}). Check firebase-config.js and your Firebase project setup.`);
+    $("#login-pin").value = ""; $("#login-pin").focus();
+  } finally {
+    btn.disabled = false; btn.textContent = "Enter";
+  }
+});
+
+$("#logout-btn").addEventListener("click", () => DB.logout());
+
+DB.onAuthChange(async (user) => {
+  if (!user) {
+    stopWatchers();
+    $("#app-shell").hidden = true;
+    $("#login-gate").hidden = false;
+    $("#login-pin").value = "";
+    $("#login-name").focus();
+    return;
+  }
+  try {
+    await DB.seed();
+    startWatchers();
+    [state.pets, state.groomers, state.bookings, state.admins] = await Promise.all(
+      COLLECTIONS.map((name) => DB.getAll(name))
+    );
+    $("#login-gate").hidden = true;
+    $("#app-shell").hidden = false;
+    render();
+  } catch (err) {
+    // Most likely a revoked admin: their login still works, but Firestore rules deny them.
+    stopWatchers();
+    await DB.logout();
+    showLoginError(err.code === "permission-denied"
+      ? "Your access has been removed. Contact an admin."
+      : `Couldn't load data (${err.code || err.message}).`);
+  }
+});

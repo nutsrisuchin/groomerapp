@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Grooming Dale</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- ============ LOGIN GATE (shop PIN) ============ -->
+  <div id="login-gate" class="login-gate">
+    <form id="login-form" class="login-card">
+      <div class="brand-mark" style="font-size:40px">🐾</div>
+      <h2>Grooming Dale</h2>
+      <div class="muted" style="margin-bottom:16px">Enter your name and PIN to continue</div>
+      <input id="login-name" type="text" placeholder="Your name (or Owner)" autocomplete="username" autofocus style="margin-bottom:10px">
+      <input id="login-pin" type="password" inputmode="numeric" placeholder="PIN" autocomplete="current-password">
+      <div id="login-error" class="login-error" hidden></div>
+      <button type="submit" id="login-btn" class="btn primary block" style="margin-top:12px">Enter</button>
+    </form>
+  </div>
+
+  <!-- ============ APP CHROME (hidden until signed in) ============ -->
+  <div id="app-shell" hidden>
+    <header class="topbar">
+      <div class="brand" data-nav="home">
+        <span class="brand-mark">🐾</span>
+        <span class="brand-name">Grooming Dale</span>
+      </div>
+      <nav class="topnav">
+        <button class="nav-btn" data-nav="home">Home</button>
+        <button class="nav-btn" data-nav="pets">Pets</button>
+        <button class="nav-btn" data-nav="bookings">Bookings</button>
+        <button class="nav-btn" data-nav="groomers">Groomers</button>
+        <button class="nav-btn" data-nav="admins">Admins</button>
+      </nav>
+      <button class="btn ghost sm" id="logout-btn">Log out</button>
+    </header>
+
+    <main id="view" class="view"><!-- views render here --></main>
+  </div>
+
+  <!-- ============ MODAL HOST ============ -->
+  <div id="modal-host" class="modal-host" hidden>
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal" role="dialog" aria-modal="true">
+      <button class="modal-x" data-close-modal aria-label="Close">✕</button>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- ============ TOAST ============ -->
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="db.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
