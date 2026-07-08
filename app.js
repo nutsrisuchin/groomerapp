@@ -556,7 +556,7 @@ function viewSchedule() {
   </div>
   <div class="card pad" style="margin-bottom:16px">
     <div class="row" style="justify-content:space-between; flex-wrap:wrap; gap:10px">
-      <div class="topnav" style="padding:3px">
+      <div class="mode-tabs">
         ${["day", "week", "month"].map((m) => `<button class="nav-btn ${mode === m ? "active" : ""}" data-action="sched-mode" data-mode="${m}">${m[0].toUpperCase()}${m.slice(1)}</button>`).join("")}
       </div>
       <div class="row">
