@@ -96,9 +96,14 @@
     }
     if (!res.ok) {
       let detail = "";
-      try { const body = await res.json(); detail = body && body.error && body.error.message ? `: ${body.error.message}` : ""; }
-      catch (err) { /* body wasn't JSON, nothing more to add */ }
-      throw new Error(`calendar-api-${res.status}${detail}`);
+      try {
+        const text = await res.text();
+        try {
+          const parsed = JSON.parse(text);
+          detail = (parsed && parsed.error && (parsed.error.message || (parsed.error.errors && parsed.error.errors[0] && parsed.error.errors[0].message))) || text;
+        } catch (parseErr) { detail = text; } // not JSON — show the raw body, whatever it is
+      } catch (readErr) { /* couldn't read the body at all */ }
+      throw new Error(`calendar-api-${res.status}${detail ? `: ${detail}` : ""}`);
     }
     return res.status === 204 ? null : res.json();
   }
