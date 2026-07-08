@@ -612,7 +612,9 @@ $("#gcal-banner-dismiss").addEventListener("click", () => { gcalBannerDismissed 
 function viewCalendarSettings() {
   const calendarId = getCalendarId();
   const connected = GCal.isConnected();
-  const pendingCount = state.bookings.filter((b) => b.calendarDirty || !b.calendarEventId).length + state.calendarTombstones.length;
+  const pendingBookings = state.bookings.filter((b) => b.calendarDirty || !b.calendarEventId);
+  const pendingTombs = state.calendarTombstones;
+  const pendingCount = pendingBookings.length + pendingTombs.length;
   return `
   <div class="page-head"><h1>Google Calendar</h1></div>
   <div class="card pad">
@@ -626,9 +628,15 @@ function viewCalendarSettings() {
       <button class="btn ${connected ? "" : "primary"}" data-action="gcal-connect">${connected ? "Reconnect" : "Connect Google Calendar"}</button>
     </div>
     ${pendingCount > 0 ? `
-      <div class="row spread" style="background:var(--surface-2); border-radius:12px; padding:10px 14px; margin-bottom:14px">
-        <span style="font-size:13px">${pendingCount} booking${pendingCount === 1 ? "" : "s"} not yet synced to Calendar</span>
-        <button class="btn sm" data-action="gcal-sync-now" ${connected ? "" : "disabled"}>Sync now</button>
+      <div class="card pad" style="background:var(--surface-2); margin-bottom:14px">
+        <div class="spread" style="margin-bottom:8px">
+          <strong style="font-size:13px">${pendingCount} item${pendingCount === 1 ? "" : "s"} not yet synced</strong>
+          <button class="btn sm" data-action="gcal-sync-now" ${connected ? "" : "disabled"}>Sync now</button>
+        </div>
+        <div class="stack" style="gap:4px">
+          ${pendingBookings.map((b) => `<div style="font-size:12px"><strong>${esc(b.petName)}</strong>${b.calendarSyncError ? ` <span class="faint">— ${esc(b.calendarSyncError)}</span>` : ` <span class="faint">— waiting to sync</span>`}</div>`).join("")}
+          ${pendingTombs.map((t) => `<div style="font-size:12px"><strong>${esc(t.petName || "booking")} (delete)</strong>${t.calendarSyncError ? ` <span class="faint">— ${esc(t.calendarSyncError)}</span>` : ` <span class="faint">— waiting to delete</span>`}</div>`).join("")}
+        </div>
       </div>` : ""}
     <div class="divider"></div>
     <div class="field"><label>Shared Calendar ID</label>
@@ -1329,7 +1337,12 @@ async function reconcileCalendar() {
         await GCal.deleteBooking(t.calendarId || calendarId, t.eventId);
         await DB.del("calendarTombstones", t.id);
         removeLocal("calendarTombstones", t.id);
-      } catch (err) { console.error("Tombstone sync failed", t, err); }
+      } catch (err) {
+        console.error("Tombstone sync failed", t, err);
+        const rec = { ...t, calendarSyncError: err.message || String(err) };
+        await DB.put("calendarTombstones", rec).catch(() => {});
+        upsertLocal("calendarTombstones", rec);
+      }
     }
     const pending = state.bookings.filter((b) => b.calendarDirty || !b.calendarEventId);
     for (const b of pending) {
@@ -1337,9 +1350,15 @@ async function reconcileCalendar() {
         const eventId = await GCal.syncBooking(calendarId, b, groomerById(b.groomerId));
         b.calendarEventId = eventId;
         b.calendarDirty = false;
+        b.calendarSyncError = null;
         await DB.put("bookings", b);
         upsertLocal("bookings", b);
-      } catch (err) { console.error("Booking sync failed", b, err); }
+      } catch (err) {
+        console.error("Booking sync failed", b, err);
+        b.calendarSyncError = err.message || String(err);
+        await DB.put("bookings", b).catch(() => {});
+        upsertLocal("bookings", b);
+      }
     }
   } finally {
     reconciling = false;
