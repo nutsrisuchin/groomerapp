@@ -9,15 +9,21 @@
 <body>
   <!-- ============ LOGIN GATE (shop PIN) ============ -->
   <div id="login-gate" class="login-gate">
-    <form id="login-form" class="login-card">
+    <div class="login-card">
       <div class="brand-mark" style="font-size:40px">🐾</div>
       <h2>Groomingdale</h2>
       <div class="muted" style="margin-bottom:16px">Enter your name and PIN to continue</div>
-      <input id="login-name" type="text" placeholder="Your name (or Owner)" autocomplete="username" autofocus style="margin-bottom:10px">
-      <input id="login-pin" type="password" inputmode="numeric" placeholder="PIN" autocomplete="current-password">
-      <div id="login-error" class="login-error" hidden></div>
-      <button type="submit" id="login-btn" class="btn primary block" style="margin-top:12px">Enter</button>
-    </form>
+      <form id="login-form">
+        <input id="login-name" type="text" placeholder="Your name (or Owner)" autocomplete="username" autofocus style="margin-bottom:10px">
+        <input id="login-pin" type="password" inputmode="numeric" placeholder="PIN" autocomplete="current-password">
+        <div id="login-error" class="login-error" hidden></div>
+        <button type="submit" id="login-btn" class="btn primary block" style="margin-top:12px">Enter</button>
+      </form>
+      <div class="divider"></div>
+      <div class="faint" style="font-size:12px; margin-bottom:8px">Optional</div>
+      <button type="button" class="btn block" id="login-gcal-btn">📅 Connect Google Calendar</button>
+      <div id="login-gcal-status" class="faint" style="font-size:12px; margin-top:8px"></div>
+    </div>
   </div>
 
   <!-- ============ APP CHROME (hidden until signed in) ============ -->
