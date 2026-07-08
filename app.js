@@ -1139,6 +1139,7 @@ function bookingModal(booking, prefillPet) {
   const initialName = b.petName || (matchedPet ? matchedPet.name : "");
   const initialBreed = b.breed || (matchedPet ? matchedPet.breed : "");
   const initialGroomer = b.groomerId || (matchedPet ? matchedPet.groomerId : "") || "";
+  const initialWeight = matchedPet ? (matchedPet.weight || "") : "";
   const initialServices = b.services || [];
   const initialHours = b.serviceHours || {};
 
@@ -1161,16 +1162,13 @@ function bookingModal(booking, prefillPet) {
     <div id="new-pet-box" class="card pad" style="margin:10px 0; background:var(--surface-2); border-style:dashed" hidden>
       <div class="spread" style="margin-bottom:8px"><strong>New pet profile</strong>
         <span class="faint" style="font-size:12px">Created together with this booking</span></div>
-      <div class="field-row">
-        <div class="field"><label>Species</label>
-          <select id="np-species"><option value="dog">🐶 Dog</option><option value="cat">🐱 Cat</option></select></div>
-        <div class="field"><label>Weight (kg)</label><input id="np-weight" type="number" step="0.1" placeholder="8.5"></div>
-      </div>
+      <div class="field"><label>Species</label>
+        <select id="np-species"><option value="dog">🐶 Dog</option><option value="cat">🐱 Cat</option></select></div>
       <button class="btn sm" id="np-photo-btn" type="button">Upload photo</button>
       <input type="file" id="np-photo-input" accept="image/*" hidden>
     </div>
 
-    <div class="field-row">
+    <div class="field-row three">
       <div class="field"><label>Breed</label>
         <input id="b-breed" list="breed-list" value="${esc(initialBreed)}" placeholder="Poodle, or type your own">
         <datalist id="breed-list">${allBreeds().map((b) => `<option value="${esc(b)}">`).join("")}</datalist>
@@ -1178,6 +1176,9 @@ function bookingModal(booking, prefillPet) {
       <div class="field"><label>Groomer</label>
         <select id="b-groomer"><option value="">— Choose —</option>
           ${state.groomers.map((g) => `<option value="${g.id}" ${initialGroomer === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select></div>
+      <div class="field"><label>Weight (kg)</label>
+        <input id="b-weight" type="number" step="0.1" placeholder="8.5" value="${esc(initialWeight)}">
+      </div>
     </div>
     <div class="field-row">
       <div class="field"><label>Date & time</label><input id="b-start" type="datetime-local" value="${startVal}"></div>
@@ -1234,6 +1235,7 @@ function bookingModal(booking, prefillPet) {
     petInput.value = pet.name;
     if (pet.breed) $("#b-breed").value = pet.breed;
     if (pet.groomerId) $("#b-groomer").value = pet.groomerId;
+    if (pet.weight) $("#b-weight").value = pet.weight;
     suggestBox.hidden = true; suggestBox.innerHTML = "";
     paintAvatar(); paintStatus();
     prefillHoursFromPet();
@@ -1281,7 +1283,7 @@ function bookingModal(booking, prefillPet) {
   function updateCostEstimate() {
     const el = $("#cost-estimate");
     if (!el) return;
-    const weight = matchedPet ? matchedPet.weight : (isNewPet ? $("#np-weight").value : null);
+    const weight = $("#b-weight").value;
     const services = $$(".b-svc").filter((cb) => cb.checked).map((cb) => cb.dataset.svc);
     if (!services.length) { el.textContent = ""; return; }
     const est = estimateCost(weight, services);
@@ -1312,7 +1314,7 @@ function bookingModal(booking, prefillPet) {
     newPetPhoto = await fileToResizedDataURL(file);
     paintAvatar();
   };
-  $("#np-weight").addEventListener("input", updateCostEstimate);
+  $("#b-weight").addEventListener("input", updateCostEstimate);
 
   paintAvatar(); paintStatus();
   if (matchedPet) prefillHoursFromPet(); else updateTotal();
@@ -1330,6 +1332,7 @@ function bookingModal(booking, prefillPet) {
 
     const groomerId = $("#b-groomer").value;
     const breed = $("#b-breed").value.trim();
+    const weight = $("#b-weight").value.trim();
     let petId = matchedPet ? matchedPet.id : null;
 
     if (!matchedPet) {
@@ -1342,12 +1345,17 @@ function bookingModal(booking, prefillPet) {
         id: DB.uid("pet"), createdAt: Date.now(),
         photo: newPetPhoto, name: petName,
         species: ($("#np-species") && $("#np-species").value) || "dog",
-        breed, weight: ($("#np-weight") && $("#np-weight").value.trim()) || "",
+        breed, weight,
         groomerId, times, history: [],
       };
       await DB.put("pets", newPet);
       upsertLocal("pets", newPet);
       petId = newPet.id;
+    } else if (weight && weight !== String(matchedPet.weight || "")) {
+      // Keep the pet's profile in sync if weight was updated right here in the booking form.
+      const updatedPet = { ...matchedPet, weight };
+      await DB.put("pets", updatedPet);
+      upsertLocal("pets", updatedPet);
     }
 
     const serviceHours = {};
