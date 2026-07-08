@@ -524,9 +524,11 @@ function bookingRow(b) {
         ${b.recurrence && b.recurrence !== "none" ? ` <span class="recur-badge">${recur.label}${b.recurrenceUntil ? ` until ${fmtDate(b.recurrenceUntil)}` : ""}</span>` : ""}
       </div>
     </div>
-    <button class="btn sm" data-action="edit-booking" data-id="${b.id}">Edit</button>
-    <button class="icon-btn" data-action="copy-confirm" data-id="${b.id}" title="Copy confirmation message">📋</button>
-    <button class="icon-btn" data-action="del-booking" data-id="${b.id}" title="Delete">🗑</button>
+    <div class="booking-actions">
+      <button class="btn sm" data-action="edit-booking" data-id="${b.id}">Edit</button>
+      <button class="icon-btn" data-action="copy-confirm" data-id="${b.id}" title="Copy confirmation message">📋</button>
+      <button class="icon-btn" data-action="del-booking" data-id="${b.id}" title="Delete">🗑</button>
+    </div>
   </div>`;
 }
 
@@ -1126,10 +1128,10 @@ function bookingModal(booking, prefillPet) {
     <div class="field"><label>Services &amp; time (hours) — shown on Google Calendar</label>
       <div class="stack" style="gap:8px">
         ${SERVICES.map((s) => `
-          <div class="row">
-            <label class="chip" style="min-width:150px"><input type="checkbox" class="b-svc" data-svc="${esc(s)}" ${initialServices.includes(s) ? "checked" : ""}> ${s}</label>
+          <div class="row" style="flex-wrap:wrap">
+            <label class="chip" style="min-width:130px; flex:1 1 130px"><input type="checkbox" class="b-svc" data-svc="${esc(s)}" ${initialServices.includes(s) ? "checked" : ""}> ${s}</label>
             <input type="number" class="b-hr" data-svc="${esc(s)}" min="0" step="0.25" placeholder="hrs"
-              value="${esc(initialHours[s] ?? "")}" style="width:90px" ${initialServices.includes(s) ? "" : "disabled"}>
+              value="${esc(initialHours[s] ?? "")}" style="width:90px; flex:none" ${initialServices.includes(s) ? "" : "disabled"}>
           </div>`).join("")}
       </div>
       <div class="help" id="duration-total" style="margin-top:6px"></div>

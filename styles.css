@@ -30,6 +30,8 @@ body{
 button{font-family:inherit; cursor:pointer; touch-action:manipulation}
 /* 16px minimum — anything smaller makes iOS Safari auto-zoom the page on focus */
 input,select,textarea{font-family:inherit; font-size:16px}
+/* iOS/Android render native checkboxes at very different default sizes — pin it down */
+input[type="checkbox"],input[type="radio"]{width:16px; height:16px; flex-shrink:0; accent-color:var(--brand); margin:0}
 
 /* ---------- Login gate ---------- */
 .login-gate{
@@ -135,6 +137,7 @@ input,select,textarea{font-family:inherit; font-size:16px}
 .field textarea{resize:vertical; min-height:70px}
 .field-row{display:grid; grid-template-columns:1fr 1fr; gap:12px}
 .field-row.three{grid-template-columns:1fr 1fr 1fr}
+@media(max-width:520px){ .field-row, .field-row.three{grid-template-columns:1fr} }
 .help{font-size:12px; color:var(--ink-faint)}
 
 /* ---------- Search bar (home) ---------- */
@@ -183,9 +186,18 @@ input,select,textarea{font-family:inherit; font-size:16px}
 .booking .when{width:120px; flex:none}
 .booking .when .date{font-weight:700}
 .booking .when .time{font-size:13px; color:var(--ink-soft)}
-.booking .who{flex:1}
+.booking .who{flex:1; min-width:0}
 .booking .who .pet{font-weight:700}
 .booking .who .sub{font-size:13px; color:var(--ink-soft)}
+.booking-actions{display:flex; gap:8px; align-items:center; flex:none}
+/* Below ~600px the row no longer fits horizontally (fixed-width date column + growing
+   pet info + 3 buttons) — stack it into a card instead of letting it overflow sideways. */
+@media(max-width:600px){
+  .booking{flex-wrap:wrap; align-items:flex-start; row-gap:8px}
+  .booking .stripe{width:100%; height:4px; align-self:auto; border-radius:4px}
+  .booking .when{width:auto; display:flex; gap:8px; align-items:baseline}
+  .booking-actions{flex:1 1 100%; justify-content:flex-end}
+}
 
 /* ---------- Notifications (activity feed on Home) ---------- */
 .activity-row{display:flex; gap:10px; align-items:flex-start; padding:8px 0; border-bottom:1px solid var(--line)}
