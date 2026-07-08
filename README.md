@@ -143,6 +143,12 @@ browser memory only, deliberately, since a true always-on connection that surviv
 would need a small backend to hold a real refresh token.) If it's not connected, bookings
 still save normally; Calendar sync is always best-effort and never blocks or undoes a save.
 
+If Calendar sync is set up (a Calendar ID is saved) but this browser lost its connection —
+most often because the browser or tab was closed — the app asks right after login: a small
+prompt with a **Connect Google Calendar** button. Google requires an actual click to open
+the sign-in popup, so this can't happen fully automatically, but it means nobody has to
+remember to check the Calendar tab themselves.
+
 ### Multi-device syncing: it doesn't matter who's connected
 Only one device needs to be connected at any given moment for everyone's changes to reach
 Calendar — sync isn't tied to whoever made the change. Every booking create/edit marks
