@@ -30,8 +30,23 @@ body{
 button{font-family:inherit; cursor:pointer; touch-action:manipulation}
 /* 16px minimum — anything smaller makes iOS Safari auto-zoom the page on focus */
 input,select,textarea{font-family:inherit; font-size:16px}
-/* iOS/Android render native checkboxes at very different default sizes — pin it down */
-input[type="checkbox"],input[type="radio"]{width:16px; height:16px; flex-shrink:0; accent-color:var(--brand); margin:0}
+/* Native checkboxes render at wildly different sizes across OS/browser/accessibility
+   settings — accent-color + width/height alone isn't reliable enough (some platforms
+   ignore it, e.g. forced-colors/high-contrast modes). Draw our own instead so it's
+   guaranteed the same everywhere: appearance:none strips all native rendering. */
+input[type="checkbox"],input[type="radio"]{
+  appearance:none; -webkit-appearance:none;
+  width:16px; height:16px; min-width:16px; flex:none; margin:0; padding:0;
+  border:1.5px solid var(--line); border-radius:4px; background:var(--surface);
+  display:inline-block; position:relative; cursor:pointer; vertical-align:middle;
+}
+input[type="radio"]{border-radius:50%}
+input[type="checkbox"]:checked, input[type="radio"]:checked{background:var(--brand); border-color:var(--brand)}
+input[type="checkbox"]:checked::after{
+  content:""; position:absolute; left:4px; top:0px; width:4px; height:9px;
+  border:solid #fff; border-width:0 2px 2px 0; transform:rotate(45deg);
+}
+input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; border-radius:50%; background:#fff}
 
 /* ---------- Login gate ---------- */
 .login-gate{
@@ -179,7 +194,7 @@ input[type="checkbox"],input[type="radio"]{width:16px; height:16px; flex-shrink:
    tricks on the chip (that caused it to stretch and push its label off to one edge on
    both desktop and mobile); everything just sizes to its own content and wraps if needed. */
 .service-row{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
-.service-row .chip{flex:none; white-space:nowrap}
+.service-row .chip{flex:none; width:fit-content; white-space:nowrap}
 .service-row .b-hr{flex:none; width:80px}
 .dot{width:10px; height:10px; border-radius:50%; display:inline-block; flex:none}
 .groomer-tag{display:inline-flex; align-items:center; gap:7px; font-weight:600; font-size:13px}
