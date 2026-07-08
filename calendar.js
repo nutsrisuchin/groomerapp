@@ -132,6 +132,14 @@
     return event;
   }
 
+  // 404 (never existed / already purged) and 410 (Google's "already deleted" response for
+  // an event it still remembers as cancelled) both mean the same thing for our purposes:
+  // there's nothing left to delete/update on Calendar's side.
+  function isGoneError(err) {
+    const msg = String(err.message);
+    return msg.startsWith("calendar-api-404") || msg.startsWith("calendar-api-410");
+  }
+
   // Creates or updates the Calendar event for a booking. Returns the event id.
   api.syncBooking = async function (calendarId, booking, groomer) {
     const body = buildEventBody(booking, groomer);
@@ -140,7 +148,7 @@
         const updated = await call("PATCH", calendarId, `/${booking.calendarEventId}`, body);
         return updated.id;
       } catch (err) {
-        if (String(err.message) !== "calendar-api-404") throw err;
+        if (!isGoneError(err)) throw err;
         // Event was removed on the Calendar side — fall through and recreate it.
       }
     }
@@ -151,7 +159,7 @@
   api.deleteBooking = async function (calendarId, eventId) {
     if (!eventId) return;
     try { await call("DELETE", calendarId, `/${eventId}`); }
-    catch (err) { if (String(err.message) !== "calendar-api-404") throw err; }
+    catch (err) { if (!isGoneError(err)) throw err; }
   };
 
   window.GCal = api;

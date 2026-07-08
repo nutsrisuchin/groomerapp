@@ -6,7 +6,7 @@
 
 /* ---------- constants ---------- */
 const SPECIES = { dog: "🐶", cat: "🐱" };
-const SERVICES = ["Shower", "Hair Styling"];
+const SERVICES = ["Basic", "Hair Styling"];
 // Suggested breeds for the booking form's breed field (a <datalist>, so typing
 // anything else — mixed breeds, cats, less common breeds — still works fine).
 const BREEDS = [
@@ -22,7 +22,7 @@ const RECUR = {
   monthly: { label: "Every month",    rrule: "FREQ=MONTHLY" },
 };
 // Maps a booking service label to the key used in a pet profile's typical-time fields
-const SERVICE_TIME_KEY = { "Shower": "shower", "Hair Styling": "styling" };
+const SERVICE_TIME_KEY = { "Basic": "shower", "Hair Styling": "styling" };
 // Palette offered when creating/editing a groomer — the full set of Google Calendar
 // event colors (exact hexes), so a groomer's swatch here matches their events later.
 const GROOMER_COLORS = [
@@ -270,6 +270,21 @@ async function migratePetTimesToHours() {
   }
 }
 
+// One-time fixup: the "Shower" service was renamed to "Basic" — existing bookings still
+// have the old label baked into their services array/serviceHours keys, which would
+// otherwise show as an unchecked, empty-hours "Basic" box when reopened for editing.
+async function migrateShowerLabelToBasic() {
+  for (const b of state.bookings) {
+    if (!b.services || !b.services.includes("Shower")) continue;
+    const services = b.services.map((s) => (s === "Shower" ? "Basic" : s));
+    const serviceHours = {};
+    Object.keys(b.serviceHours || {}).forEach((k) => { serviceHours[k === "Shower" ? "Basic" : k] = b.serviceHours[k]; });
+    const rec = { ...b, services, serviceHours, calendarDirty: true };
+    await DB.put("bookings", rec);
+    upsertLocal("bookings", rec);
+  }
+}
+
 /* ---------- image resize ---------- */
 function fileToResizedDataURL(file, max = 640) {
   return new Promise((resolve, reject) => {
@@ -443,7 +458,7 @@ function viewPetDetail() {
         <div class="divider"></div>
         <h3 class="section-title">Typical time consumed</h3>
         <div class="time-pills">
-          <span class="time-pill">🚿 Shower · ${t.shower ? t.shower + "h" : "—"}</span>
+          <span class="time-pill">🚿 Basic · ${t.shower ? t.shower + "h" : "—"}</span>
           <span class="time-pill">💈 Styling · ${t.styling ? t.styling + "h" : "—"}</span>
         </div>
       </div>
@@ -985,7 +1000,7 @@ function petEditorModal(pet) {
       </select></div>
     <h3 class="section-title" style="margin-top:6px">Typical time consumed (hours)</h3>
     <div class="field-row">
-      <div class="field"><label>🚿 Shower</label><input id="f-shower" type="number" min="0" step="0.25" value="${esc(t.shower ?? "")}"></div>
+      <div class="field"><label>🚿 Basic</label><input id="f-shower" type="number" min="0" step="0.25" value="${esc(t.shower ?? "")}"></div>
       <div class="field"><label>💈 Styling</label><input id="f-styling" type="number" min="0" step="0.25" value="${esc(t.styling ?? "")}"></div>
     </div>
     <div class="row spread" style="margin-top:12px">
@@ -1139,10 +1154,10 @@ function bookingModal(booking, prefillPet) {
     <div class="field"><label>Services &amp; time (hours) — shown on Google Calendar</label>
       <div class="stack" style="gap:8px">
         ${SERVICES.map((s) => `
-          <div class="row" style="flex-wrap:wrap">
-            <label class="chip" style="min-width:130px; flex:1 1 130px"><input type="checkbox" class="b-svc" data-svc="${esc(s)}" ${initialServices.includes(s) ? "checked" : ""}> ${s}</label>
+          <div class="service-row">
+            <label class="chip"><input type="checkbox" class="b-svc" data-svc="${esc(s)}" ${initialServices.includes(s) ? "checked" : ""}> ${s}</label>
             <input type="number" class="b-hr" data-svc="${esc(s)}" min="0" step="0.25" placeholder="hrs"
-              value="${esc(initialHours[s] ?? "")}" style="width:90px; flex:none" ${initialServices.includes(s) ? "" : "disabled"}>
+              value="${esc(initialHours[s] ?? "")}" ${initialServices.includes(s) ? "" : "disabled"}>
           </div>`).join("")}
       </div>
       <div class="help" id="duration-total" style="margin-top:6px"></div>
@@ -1673,6 +1688,7 @@ DB.onAuthChange(async (user) => {
     gcalBannerDismissed = false;
     render();
     migratePetTimesToHours();
+    migrateShowerLabelToBasic();
     updateGcalBanner();
   } catch (err) {
     // Most likely a revoked admin: their login still works, but Firestore rules deny them.

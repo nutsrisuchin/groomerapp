@@ -175,6 +175,12 @@ input[type="checkbox"],input[type="radio"]{width:16px; height:16px; flex-shrink:
 
 /* ---------- Chips / badges ---------- */
 .chip{display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:600; background:var(--surface-2); color:var(--ink-soft)}
+/* Booking form's per-service checkbox + hours row — deliberately no flex-grow/flex-basis
+   tricks on the chip (that caused it to stretch and push its label off to one edge on
+   both desktop and mobile); everything just sizes to its own content and wraps if needed. */
+.service-row{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+.service-row .chip{flex:none; white-space:nowrap}
+.service-row .b-hr{flex:none; width:80px}
 .dot{width:10px; height:10px; border-radius:50%; display:inline-block; flex:none}
 .groomer-tag{display:inline-flex; align-items:center; gap:7px; font-weight:600; font-size:13px}
 .recur-badge{font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--brand); background:rgba(124,92,255,.1); padding:2px 8px; border-radius:6px}
