@@ -525,8 +525,16 @@ function bookingRow(b) {
       </div>
     </div>
     <button class="btn sm" data-action="edit-booking" data-id="${b.id}">Edit</button>
+    <button class="icon-btn" data-action="copy-confirm" data-id="${b.id}" title="Copy confirmation message">📋</button>
     <button class="icon-btn" data-action="del-booking" data-id="${b.id}" title="Delete">🗑</button>
   </div>`;
+}
+
+// "confirmed น้อง {name} {breed} {date & time}" — ready to paste to a customer.
+// Uses the upcoming occurrence for recurring bookings (same date bookingRow shows), not the original start.
+function bookingConfirmMessage(b) {
+  const when = nextOccurrence(b) || new Date(b.start);
+  return ["confirmed", "น้อง", b.petName, b.breed, `${fmtDate(when)} ${fmtTime(when)}`].filter(Boolean).join(" ");
 }
 
 /* ---------- GROOMERS ---------- */
@@ -1459,6 +1467,13 @@ async function handleAction(action, data) {
     case "new-booking": bookingModal(null); break;
     case "book-pet": bookingModal(null, state.pets.find((p) => p.id === data.id)); break;
     case "edit-booking": bookingModal(state.bookings.find((b) => b.id === data.id)); break;
+    case "copy-confirm": {
+      const b = state.bookings.find((x) => x.id === data.id);
+      if (!b) break;
+      const msg = bookingConfirmMessage(b);
+      try { await navigator.clipboard.writeText(msg); toast("Copied — ready to paste to the customer"); }
+      catch (err) { toast(`Couldn't copy automatically — here it is: ${msg}`); }
+    } break;
     case "del-booking":
       if (confirm("Delete this booking?")) {
         const deleted = state.bookings.find((b) => b.id === data.id);

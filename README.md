@@ -76,7 +76,9 @@ any data regardless).
   service times) or create a new pet profile right from the booking form. Each selected
   service needs its hours entered (used as the Google Calendar event duration later).
   Repeat **one-time / weekly / every 2 weeks / monthly**, with an optional **repeat-until**
-  end date.
+  end date. Each booking row has a 📋 button that copies a ready-to-send confirmation
+  message to the clipboard — `confirmed น้อง {name} {breed} {date & time}` — for pasting
+  straight to the customer (uses the upcoming date for recurring bookings).
 - **Groomers** — add/remove groomers, each with a color (the full Google Calendar palette,
   11 colors including yellow). Seeded with **Mint, Mikka, Boat**.
 - **Admins** — add/remove people who can log into the app, each with their own name + PIN.

@@ -281,6 +281,7 @@ input,select,textarea{font-family:inherit; font-size:16px}
 
 /* ---------- Toast ---------- */
 .toast{position:fixed; bottom:max(24px, env(safe-area-inset-bottom)); left:50%; transform:translateX(-50%);
+  max-width:calc(100vw - 32px); width:max-content; text-align:center;
   background:var(--ink); color:#fff; padding:12px 20px; border-radius:12px; box-shadow:var(--shadow-lg); z-index:80; font-weight:600; font-size:14px}
 
 /* ---------- Misc ---------- */
