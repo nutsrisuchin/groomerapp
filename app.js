@@ -40,7 +40,7 @@ const GROOMER_COLORS = [
 ];
 
 /* ---------- state ---------- */
-const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], search: { name: "", breed: "" } };
+const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], scheduleDate: "", search: { name: "", breed: "" } };
 const getCalendarId = () => (state.settings.find((s) => s.id === "calendar") || {}).calendarId || "";
 const getCustomBreeds = () => (state.settings.find((s) => s.id === "breeds") || {}).list || [];
 // Static top-20 list plus any breed staff have typed in before, deduped case-insensitively.
@@ -88,6 +88,60 @@ function emailForName(name) {
 function fmtDate(d) { return new Date(d).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }); }
 function fmtTime(d) { return new Date(d).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }); }
 function startOfToday() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
+function dateKey(d) { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`; }
+function todayKey() { return dateKey(new Date()); }
+function addDaysKey(dateStr, n) { const d = new Date(dateStr + "T00:00:00"); d.setDate(d.getDate() + n); return dateKey(d); }
+function fmtDateKey(dateStr) { return new Date(dateStr + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short", year: "numeric" }); }
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/* ---------- business hours + schedule/free-slot helpers ---------- */
+function getBusinessHours() {
+  const s = state.settings.find((x) => x.id === "hours");
+  return s || { open: "10:00", close: "19:00", closedDays: [2] }; // default: closed Tuesdays
+}
+function toMinutes(hhmm) { const [h, m] = hhmm.split(":").map(Number); return h * 60 + (m || 0); }
+function fmtMinutes(min) {
+  const h = Math.floor(min / 60), m = min % 60;
+  const d = new Date(); d.setHours(h, m, 0, 0);
+  return fmtTime(d);
+}
+
+// Does `booking` occur on `dateStr` ("YYYY-MM-DD")? Returns the occurrence's
+// start Date (same time-of-day as the booking, on that date) or null.
+function occurrenceOnDate(booking, dateStr) {
+  const start = new Date(booking.start);
+  const startKey = dateKey(start);
+  if (dateStr < startKey) return null;
+  if (booking.recurrenceUntil && dateStr > booking.recurrenceUntil) return null;
+  const rec = booking.recurrence || "none";
+  if (rec === "none") { if (dateStr !== startKey) return null; }
+  else {
+    const startOnly = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+    const viewed = new Date(dateStr + "T00:00:00");
+    const diffDays = Math.round((viewed - startOnly) / 86400000);
+    let matches = false;
+    if (rec === "weekly") matches = diffDays >= 0 && diffDays % 7 === 0;
+    else if (rec === "biweekly") matches = diffDays >= 0 && diffDays % 14 === 0;
+    else if (rec === "monthly") matches = diffDays >= 0 && viewed.getDate() === startOnly.getDate();
+    if (!matches) return null;
+  }
+  const occ = new Date(dateStr + "T00:00:00");
+  occ.setHours(start.getHours(), start.getMinutes(), 0, 0);
+  return occ;
+}
+
+// Free minute-ranges within [openMin, closeMin), given sorted busy {startMin, endMin} blocks.
+function freeSlots(busy, openMin, closeMin) {
+  const free = [];
+  let cursor = openMin;
+  for (const b of busy) {
+    const s = Math.max(b.startMin, openMin), e = Math.min(b.endMin, closeMin);
+    if (s > cursor) free.push({ startMin: cursor, endMin: s });
+    cursor = Math.max(cursor, e);
+  }
+  if (cursor < closeMin) free.push({ startMin: cursor, endMin: closeMin });
+  return free;
+}
 
 // Next occurrence >= today for a (possibly recurring) booking.
 // Returns null once a "repeat until" date exists and the series has ended.
@@ -176,6 +230,7 @@ function render() {
   else if (state.view === "groomers") v.innerHTML = viewGroomers();
   else if (state.view === "admins") v.innerHTML = viewAdmins();
   else if (state.view === "calendar") v.innerHTML = viewCalendarSettings();
+  else if (state.view === "schedule") v.innerHTML = viewSchedule();
   bindView();
   window.scrollTo({ top: 0 });
 }
@@ -440,6 +495,126 @@ function viewCalendarSettings() {
     </div>
     <button class="btn primary sm" data-action="gcal-save-id">Save Calendar ID</button>
   </div>`;
+}
+
+/* ---------- SCHEDULE (day timeline + free slots per groomer) ---------- */
+const PX_PER_HOUR = 60;
+
+function viewSchedule() {
+  if (!state.scheduleDate) state.scheduleDate = todayKey();
+  const dateStr = state.scheduleDate;
+  const hours = getBusinessHours();
+  const dow = new Date(dateStr + "T00:00:00").getDay();
+  const closed = (hours.closedDays || []).includes(dow);
+  const openMin = toMinutes(hours.open), closeMin = toMinutes(hours.close);
+
+  const header = `
+  <div class="page-head">
+    <h1>Schedule</h1>
+    <button class="btn sm" data-action="edit-hours">Edit hours</button>
+  </div>
+  <div class="card pad" style="margin-bottom:16px">
+    <div class="row" style="justify-content:space-between; flex-wrap:wrap; gap:10px">
+      <div class="row">
+        <button class="btn sm" data-action="sched-prev">← Prev</button>
+        <button class="btn sm" data-action="sched-today">Today</button>
+        <button class="btn sm" data-action="sched-next">Next →</button>
+      </div>
+      <input type="date" id="sched-date-input" value="${dateStr}">
+    </div>
+    <div style="margin-top:10px; font-weight:700">${fmtDateKey(dateStr)}</div>
+  </div>`;
+
+  if (closed) return header + emptyBlock("🌙", "Closed", `The shop is closed on ${DAY_NAMES[dow]}s.`, null, null);
+  if (!state.groomers.length) return header + emptyBlock("🧑‍🎨", "No groomers yet", "Add a groomer to see their schedule here.", "new-groomer", "Add groomer");
+
+  const hourMarks = [];
+  for (let m = openMin; m <= closeMin; m += 60) hourMarks.push(m);
+
+  const columns = state.groomers.map((g) => {
+    const items = state.bookings
+      .map((b) => {
+        if (b.groomerId !== g.id) return null;
+        const occ = occurrenceOnDate(b, dateStr);
+        if (!occ) return null;
+        const startMin = occ.getHours() * 60 + occ.getMinutes();
+        const dur = bookingDurationHours(b) || 1;
+        return { booking: b, startMin, endMin: startMin + Math.round(dur * 60) };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.startMin - b.startMin);
+    return { groomer: g, items, free: freeSlots(items, openMin, closeMin) };
+  });
+
+  const gridHeight = ((closeMin - openMin) / 60) * PX_PER_HOUR;
+
+  const grid = `
+  <div class="card pad" style="overflow-x:auto">
+    <div class="schedule-grid" style="height:${gridHeight}px">
+      <div class="schedule-axis">
+        ${hourMarks.map((m) => `<div class="axis-mark" style="top:${((m - openMin) / 60) * PX_PER_HOUR}px">${fmtMinutes(m)}</div>`).join("")}
+      </div>
+      ${columns.map((col) => `
+        <div class="schedule-col">
+          <div class="schedule-col-head"><span class="dot" style="background:${col.groomer.color}"></span>${esc(col.groomer.name)}</div>
+          <div class="schedule-col-body" style="height:${gridHeight}px">
+            ${col.items.map((it) => {
+              const top = ((Math.max(it.startMin, openMin) - openMin) / 60) * PX_PER_HOUR;
+              const h = Math.max(((Math.min(it.endMin, closeMin) - Math.max(it.startMin, openMin)) / 60) * PX_PER_HOUR, 20);
+              const b = it.booking;
+              return `<div class="schedule-block" style="top:${top}px; height:${h}px; background:${col.groomer.color}" data-action="edit-booking" data-id="${b.id}" title="${esc(b.petName)}${b.breed ? " " + esc(b.breed) : ""}">
+                <strong>${esc(b.petName)}</strong>${(b.services || []).length ? `<br>${esc(b.services.join(", "))}` : ""}
+              </div>`;
+            }).join("")}
+          </div>
+        </div>`).join("")}
+    </div>
+  </div>`;
+
+  const summary = `
+  <div class="card pad" style="margin-top:16px">
+    <h3 class="section-title">Open slots</h3>
+    ${columns.map((col) => `
+      <div class="groomer-row">
+        <span class="swatch" style="background:${col.groomer.color}"></span>
+        <div class="grow"><strong>${esc(col.groomer.name)}</strong>
+          <div class="faint" style="font-size:13px">${col.free.length
+            ? col.free.map((f) => `${fmtMinutes(f.startMin)}–${fmtMinutes(f.endMin)}`).join(", ")
+            : "Fully booked"}</div>
+        </div>
+      </div>`).join("")}
+  </div>`;
+
+  return header + grid + summary;
+}
+
+/* ---------- Business hours editor ---------- */
+function hoursModal() {
+  const h = getBusinessHours();
+  openModal(`
+    <h2>Business hours</h2>
+    <div class="field-row">
+      <div class="field"><label>Opens</label><input id="h-open" type="time" value="${esc(h.open)}"></div>
+      <div class="field"><label>Closes</label><input id="h-close" type="time" value="${esc(h.close)}"></div>
+    </div>
+    <div class="field"><label>Closed on</label>
+      <div class="tag-list">${DAY_NAMES.map((d, i) => `<label class="chip"><input type="checkbox" class="h-closed" value="${i}" ${(h.closedDays || []).includes(i) ? "checked" : ""}> ${d}</label>`).join("")}</div>
+    </div>
+    <div class="row" style="justify-content:flex-end; margin-top:8px">
+      <button class="btn" data-close-modal>Cancel</button>
+      <button class="btn primary" id="save-hours">Save</button>
+    </div>`);
+  $("#save-hours").onclick = async () => {
+    const rec = {
+      id: "hours",
+      open: $("#h-open").value || "10:00",
+      close: $("#h-close").value || "19:00",
+      closedDays: $$(".h-closed").filter((c) => c.checked).map((c) => Number(c.value)),
+      updatedAt: Date.now(),
+    };
+    await DB.put("settings", rec); upsertLocal("settings", rec);
+    closeModal(); toast("Hours saved"); render();
+  };
 }
 
 /* ---------- shared empty states ---------- */
@@ -937,6 +1112,10 @@ function bindView() {
   if (qn) qn.oninput = () => { state.search.name = qn.value; renderHomeResults(); };
   if (qb) qb.oninput = () => { state.search.breed = qb.value; renderHomeResults(); };
 
+  // schedule date jump
+  const schedDate = $("#sched-date-input");
+  if (schedDate) schedDate.onchange = () => { state.scheduleDate = schedDate.value; render(); };
+
   // actions
   $$("[data-action]").forEach((el) => el.onclick = () => handleAction(el.dataset.action, el.dataset));
 }
@@ -1000,6 +1179,10 @@ async function handleAction(action, data) {
       const rec = { id: "calendar", calendarId: id, updatedAt: Date.now() };
       await DB.put("settings", rec); upsertLocal("settings", rec); toast("Calendar ID saved"); render();
     } break;
+    case "sched-prev": state.scheduleDate = addDaysKey(state.scheduleDate || todayKey(), -1); render(); break;
+    case "sched-next": state.scheduleDate = addDaysKey(state.scheduleDate || todayKey(), 1); render(); break;
+    case "sched-today": state.scheduleDate = todayKey(); render(); break;
+    case "edit-hours": hoursModal(); break;
     case "clear-search": state.search = { name: "", breed: "" }; render(); break;
     case "go-pets": go("pets"); break;
   }

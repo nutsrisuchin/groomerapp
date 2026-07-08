@@ -79,6 +79,11 @@ any data regardless).
   11 colors including yellow). Seeded with **Mint, Mikka, Boat**.
 - **Admins** — add/remove people who can log into the app, each with their own name + PIN.
 - **Calendar** — connect a Google account and set the shared Calendar ID that bookings sync to.
+- **Schedule** — a day-by-day timeline, one column per groomer, showing booked slots as
+  colored blocks plus a text list of open time ranges per groomer. Navigate by day or jump
+  to any date; business hours and closed days are editable from this tab (defaults to
+  10:00–19:00, closed Tuesdays). Built entirely from the app's own booking data, so it's
+  instant and always up to date regardless of Google Calendar connection status.
 
 ## Files
 | File | Purpose |
