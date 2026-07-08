@@ -42,6 +42,27 @@ const GROOMER_COLORS = [
 /* ---------- state ---------- */
 const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], search: { name: "", breed: "" } };
 const getCalendarId = () => (state.settings.find((s) => s.id === "calendar") || {}).calendarId || "";
+const getCustomBreeds = () => (state.settings.find((s) => s.id === "breeds") || {}).list || [];
+// Static top-20 list plus any breed staff have typed in before, deduped case-insensitively.
+function allBreeds() {
+  const seen = new Set();
+  const out = [];
+  [...BREEDS, ...getCustomBreeds()].forEach((b) => {
+    const key = b.trim().toLowerCase();
+    if (key && !seen.has(key)) { seen.add(key); out.push(b.trim()); }
+  });
+  return out;
+}
+// Remembers a newly-typed breed (if it's new) so it shows up as a suggestion next time.
+async function rememberBreed(breed) {
+  const b = (breed || "").trim();
+  if (!b) return;
+  const known = allBreeds().map((x) => x.toLowerCase());
+  if (known.includes(b.toLowerCase())) return;
+  const rec = { id: "breeds", list: [...getCustomBreeds(), b], updatedAt: Date.now() };
+  await DB.put("settings", rec);
+  upsertLocal("settings", rec);
+}
 
 /* ---------- tiny DOM helpers ---------- */
 const $  = (s, r = document) => r.querySelector(s);
@@ -477,7 +498,10 @@ function petEditorModal(pet) {
       <div class="field"><label>Species</label><select id="f-species">${opt("dog", p.species, "🐶 Dog")}${opt("cat", p.species, "🐱 Cat")}</select></div>
     </div>
     <div class="field-row">
-      <div class="field"><label>Breed</label><input id="f-breed" value="${esc(p.breed || "")}" placeholder="Poodle"></div>
+      <div class="field"><label>Breed</label>
+        <input id="f-breed" list="breed-list" value="${esc(p.breed || "")}" placeholder="Poodle, or type your own">
+        <datalist id="breed-list">${allBreeds().map((b) => `<option value="${esc(b)}">`).join("")}</datalist>
+      </div>
       <div class="field"><label>Weight (kg)</label><input id="f-weight" type="number" step="0.1" value="${esc(p.weight || "")}" placeholder="8.5"></div>
     </div>
     <div class="field"><label>Assigned groomer</label>
@@ -531,6 +555,7 @@ function petEditorModal(pet) {
     closeModal();
     toast(pet ? "Pet updated" : "Pet added");
     go("pet", rec.id);
+    rememberBreed(rec.breed);
   };
 }
 const numOrNull = (v) => (v === "" || v == null ? null : Number(v));
@@ -617,7 +642,7 @@ function bookingModal(booking, prefillPet) {
     <div class="field-row">
       <div class="field"><label>Breed</label>
         <input id="b-breed" list="breed-list" value="${esc(initialBreed)}" placeholder="Poodle, or type your own">
-        <datalist id="breed-list">${BREEDS.map((b) => `<option value="${esc(b)}">`).join("")}</datalist>
+        <datalist id="breed-list">${allBreeds().map((b) => `<option value="${esc(b)}">`).join("")}</datalist>
       </div>
       <div class="field"><label>Groomer</label>
         <select id="b-groomer"><option value="">— Choose —</option>
@@ -802,6 +827,7 @@ function bookingModal(booking, prefillPet) {
     upsertLocal("bookings", rec);
     closeModal(); toast(booking ? "Booking updated" : "Booking created"); render();
     syncBookingToCalendar(rec);
+    rememberBreed(rec.breed);
   };
 }
 // Best-effort: a Calendar failure here never undoes or blocks the booking save above.
