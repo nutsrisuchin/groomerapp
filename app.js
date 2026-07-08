@@ -91,8 +91,37 @@ function startOfToday() { const d = new Date(); d.setHours(0, 0, 0, 0); return d
 function dateKey(d) { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`; }
 function todayKey() { return dateKey(new Date()); }
 function addDaysKey(dateStr, n) { const d = new Date(dateStr + "T00:00:00"); d.setDate(d.getDate() + n); return dateKey(d); }
+function addMonthsKey(dateStr, n) {
+  const d = new Date(dateStr + "T00:00:00");
+  const day = d.getDate();
+  d.setDate(1); // avoid rollover bugs (e.g. Jan 31 + 1 month)
+  d.setMonth(d.getMonth() + n);
+  const daysInTarget = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(day, daysInTarget));
+  return dateKey(d);
+}
+function startOfWeekKey(dateStr) { const d = new Date(dateStr + "T00:00:00"); d.setDate(d.getDate() - d.getDay()); return dateKey(d); }
+// 6 full weeks (42 days) starting the Sunday on/before the 1st of the month — a stable grid size.
+function monthGridDates(dateStr) {
+  const d = new Date(dateStr + "T00:00:00");
+  const start = new Date(d.getFullYear(), d.getMonth(), 1);
+  start.setDate(start.getDate() - start.getDay());
+  const dates = [];
+  for (let i = 0; i < 42; i++) { const cur = new Date(start); cur.setDate(start.getDate() + i); dates.push(dateKey(cur)); }
+  return dates;
+}
 function fmtDateKey(dateStr) { return new Date(dateStr + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short", year: "numeric" }); }
+function fmtWeekRange(dateStr) {
+  const start = startOfWeekKey(dateStr), end = addDaysKey(start, 6);
+  const s = new Date(start + "T00:00:00"), e = new Date(end + "T00:00:00");
+  const sameMonth = s.getMonth() === e.getMonth();
+  const sFmt = s.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  const eFmt = e.toLocaleDateString(undefined, sameMonth ? { day: "numeric" } : { day: "numeric", month: "short" });
+  return `${sFmt} – ${eFmt}, ${e.getFullYear()}`;
+}
+function fmtMonthKey(dateStr) { return new Date(dateStr + "T00:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }); }
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const DAY_NAMES_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 /* ---------- business hours + schedule/free-slot helpers ---------- */
 function getBusinessHours() {
@@ -141,6 +170,20 @@ function freeSlots(busy, openMin, closeMin) {
   }
   if (cursor < closeMin) free.push({ startMin: cursor, endMin: closeMin });
   return free;
+}
+
+// All bookings (any groomer) occurring on `dateStr`, each with its occurrence time and duration.
+function bookingsOnDate(dateStr) {
+  return state.bookings
+    .map((b) => {
+      const occ = occurrenceOnDate(b, dateStr);
+      if (!occ) return null;
+      const startMin = occ.getHours() * 60 + occ.getMinutes();
+      const dur = bookingDurationHours(b) || 1;
+      return { booking: b, groomer: groomerById(b.groomerId), startMin, endMin: startMin + Math.round(dur * 60) };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.startMin - b.startMin);
 }
 
 // Next occurrence >= today for a (possibly recurring) booking.
@@ -497,16 +540,14 @@ function viewCalendarSettings() {
   </div>`;
 }
 
-/* ---------- SCHEDULE (day timeline + free slots per groomer) ---------- */
+/* ---------- SCHEDULE (day/week timeline + month grid + free slots) ---------- */
 const PX_PER_HOUR = 60;
 
 function viewSchedule() {
   if (!state.scheduleDate) state.scheduleDate = todayKey();
-  const dateStr = state.scheduleDate;
-  const hours = getBusinessHours();
-  const dow = new Date(dateStr + "T00:00:00").getDay();
-  const closed = (hours.closedDays || []).includes(dow);
-  const openMin = toMinutes(hours.open), closeMin = toMinutes(hours.close);
+  if (!state.scheduleMode) state.scheduleMode = "day";
+  const mode = state.scheduleMode, dateStr = state.scheduleDate;
+  const title = mode === "day" ? fmtDateKey(dateStr) : mode === "week" ? fmtWeekRange(dateStr) : fmtMonthKey(dateStr);
 
   const header = `
   <div class="page-head">
@@ -515,6 +556,9 @@ function viewSchedule() {
   </div>
   <div class="card pad" style="margin-bottom:16px">
     <div class="row" style="justify-content:space-between; flex-wrap:wrap; gap:10px">
+      <div class="topnav" style="padding:3px">
+        ${["day", "week", "month"].map((m) => `<button class="nav-btn ${mode === m ? "active" : ""}" data-action="sched-mode" data-mode="${m}">${m[0].toUpperCase()}${m.slice(1)}</button>`).join("")}
+      </div>
       <div class="row">
         <button class="btn sm" data-action="sched-prev">← Prev</button>
         <button class="btn sm" data-action="sched-today">Today</button>
@@ -522,30 +566,35 @@ function viewSchedule() {
       </div>
       <input type="date" id="sched-date-input" value="${dateStr}">
     </div>
-    <div style="margin-top:10px; font-weight:700">${fmtDateKey(dateStr)}</div>
+    <div style="margin-top:10px; font-weight:700">${title}</div>
   </div>`;
 
-  if (closed) return header + emptyBlock("🌙", "Closed", `The shop is closed on ${DAY_NAMES[dow]}s.`, null, null);
-  if (!state.groomers.length) return header + emptyBlock("🧑‍🎨", "No groomers yet", "Add a groomer to see their schedule here.", "new-groomer", "Add groomer");
+  const body = mode === "day" ? scheduleBodyDay(dateStr) : mode === "week" ? scheduleBodyWeek(dateStr) : scheduleBodyMonth(dateStr);
+  return header + body;
+}
 
-  const hourMarks = [];
-  for (let m = openMin; m <= closeMin; m += 60) hourMarks.push(m);
+function scheduleBlockHtml(it, openMin, closeMin, color) {
+  const top = ((Math.max(it.startMin, openMin) - openMin) / 60) * PX_PER_HOUR;
+  const h = Math.max(((Math.min(it.endMin, closeMin) - Math.max(it.startMin, openMin)) / 60) * PX_PER_HOUR, 20);
+  const b = it.booking;
+  return `<div class="schedule-block" style="top:${top}px; height:${h}px; background:${color}" data-action="edit-booking" data-id="${b.id}" title="${esc(b.petName)}${b.breed ? " " + esc(b.breed) : ""}">
+    <strong>${esc(b.petName)}</strong>${(b.services || []).length ? `<br>${esc(b.services.join(", "))}` : ""}
+  </div>`;
+}
 
+function scheduleBodyDay(dateStr) {
+  const hours = getBusinessHours();
+  const dow = new Date(dateStr + "T00:00:00").getDay();
+  if ((hours.closedDays || []).includes(dow)) return emptyBlock("🌙", "Closed", `The shop is closed on ${DAY_NAMES[dow]}s.`, null, null);
+  if (!state.groomers.length) return emptyBlock("🧑‍🎨", "No groomers yet", "Add a groomer to see their schedule here.", "new-groomer", "Add groomer");
+
+  const openMin = toMinutes(hours.open), closeMin = toMinutes(hours.close);
+  const hourMarks = []; for (let m = openMin; m <= closeMin; m += 60) hourMarks.push(m);
+  const all = bookingsOnDate(dateStr);
   const columns = state.groomers.map((g) => {
-    const items = state.bookings
-      .map((b) => {
-        if (b.groomerId !== g.id) return null;
-        const occ = occurrenceOnDate(b, dateStr);
-        if (!occ) return null;
-        const startMin = occ.getHours() * 60 + occ.getMinutes();
-        const dur = bookingDurationHours(b) || 1;
-        return { booking: b, startMin, endMin: startMin + Math.round(dur * 60) };
-      })
-      .filter(Boolean)
-      .sort((a, b) => a.startMin - b.startMin);
+    const items = all.filter((it) => it.booking.groomerId === g.id);
     return { groomer: g, items, free: freeSlots(items, openMin, closeMin) };
   });
-
   const gridHeight = ((closeMin - openMin) / 60) * PX_PER_HOUR;
 
   const grid = `
@@ -558,14 +607,7 @@ function viewSchedule() {
         <div class="schedule-col">
           <div class="schedule-col-head"><span class="dot" style="background:${col.groomer.color}"></span>${esc(col.groomer.name)}</div>
           <div class="schedule-col-body" style="height:${gridHeight}px">
-            ${col.items.map((it) => {
-              const top = ((Math.max(it.startMin, openMin) - openMin) / 60) * PX_PER_HOUR;
-              const h = Math.max(((Math.min(it.endMin, closeMin) - Math.max(it.startMin, openMin)) / 60) * PX_PER_HOUR, 20);
-              const b = it.booking;
-              return `<div class="schedule-block" style="top:${top}px; height:${h}px; background:${col.groomer.color}" data-action="edit-booking" data-id="${b.id}" title="${esc(b.petName)}${b.breed ? " " + esc(b.breed) : ""}">
-                <strong>${esc(b.petName)}</strong>${(b.services || []).length ? `<br>${esc(b.services.join(", "))}` : ""}
-              </div>`;
-            }).join("")}
+            ${col.items.map((it) => scheduleBlockHtml(it, openMin, closeMin, col.groomer.color)).join("")}
           </div>
         </div>`).join("")}
     </div>
@@ -585,7 +627,74 @@ function viewSchedule() {
       </div>`).join("")}
   </div>`;
 
-  return header + grid + summary;
+  return grid + summary;
+}
+
+function scheduleBodyWeek(dateStr) {
+  const hours = getBusinessHours();
+  const openMin = toMinutes(hours.open), closeMin = toMinutes(hours.close);
+  const weekStart = startOfWeekKey(dateStr);
+  const days = [...Array(7)].map((_, i) => addDaysKey(weekStart, i));
+  const hourMarks = []; for (let m = openMin; m <= closeMin; m += 60) hourMarks.push(m);
+  const gridHeight = ((closeMin - openMin) / 60) * PX_PER_HOUR;
+  const today = todayKey();
+
+  const cols = days.map((d) => {
+    const dow = new Date(d + "T00:00:00").getDay();
+    const closed = (hours.closedDays || []).includes(dow);
+    return { dateStr: d, dow, closed, items: closed ? [] : bookingsOnDate(d) };
+  });
+
+  return `
+  <div class="card pad" style="overflow-x:auto">
+    <div class="schedule-grid" style="height:${gridHeight}px">
+      <div class="schedule-axis">
+        ${hourMarks.map((m) => `<div class="axis-mark" style="top:${((m - openMin) / 60) * PX_PER_HOUR}px">${fmtMinutes(m)}</div>`).join("")}
+      </div>
+      ${cols.map((col) => `
+        <div class="schedule-col">
+          <div class="schedule-col-head" data-action="goto-day" data-date="${col.dateStr}" style="cursor:pointer">
+            ${DAY_NAMES_SHORT[col.dow]} ${new Date(col.dateStr + "T00:00:00").getDate()}${col.dateStr === today ? " •" : ""}
+          </div>
+          <div class="schedule-col-body" style="height:${gridHeight}px">
+            ${col.closed ? `<div class="closed-overlay">Closed</div>`
+              : col.items.map((it) => scheduleBlockHtml(it, openMin, closeMin, groomerColor(it.booking.groomerId))).join("")}
+          </div>
+        </div>`).join("")}
+    </div>
+  </div>`;
+}
+
+function scheduleBodyMonth(dateStr) {
+  const hours = getBusinessHours();
+  const viewedMonth = new Date(dateStr + "T00:00:00").getMonth();
+  const today = todayKey();
+  const maxShow = 3;
+
+  const cells = monthGridDates(dateStr).map((d) => {
+    const dow = new Date(d + "T00:00:00").getDay();
+    const closed = (hours.closedDays || []).includes(dow);
+    const inMonth = new Date(d + "T00:00:00").getMonth() === viewedMonth;
+    const items = bookingsOnDate(d);
+    const shown = items.slice(0, maxShow);
+    const more = items.length - shown.length;
+    return `
+      <div class="month-cell ${inMonth ? "" : "outside"} ${d === today ? "today" : ""}" data-action="goto-day" data-date="${d}">
+        <div class="month-cell-date">${new Date(d + "T00:00:00").getDate()}${closed ? " 🌙" : ""}</div>
+        <div class="month-cell-items">
+          ${shown.map((it) => `<div class="month-pill" style="background:${groomerColor(it.booking.groomerId)}">${esc(fmtMinutes(it.startMin))} ${esc(it.booking.petName)}</div>`).join("")}
+          ${more > 0 ? `<div class="month-more">+${more} more</div>` : ""}
+        </div>
+      </div>`;
+  }).join("");
+
+  return `
+  <div class="card pad">
+    <div class="month-grid">
+      ${DAY_NAMES_SHORT.map((d) => `<div class="month-dow">${d}</div>`).join("")}
+      ${cells}
+    </div>
+  </div>`;
 }
 
 /* ---------- Business hours editor ---------- */
@@ -1179,9 +1288,19 @@ async function handleAction(action, data) {
       const rec = { id: "calendar", calendarId: id, updatedAt: Date.now() };
       await DB.put("settings", rec); upsertLocal("settings", rec); toast("Calendar ID saved"); render();
     } break;
-    case "sched-prev": state.scheduleDate = addDaysKey(state.scheduleDate || todayKey(), -1); render(); break;
-    case "sched-next": state.scheduleDate = addDaysKey(state.scheduleDate || todayKey(), 1); render(); break;
+    case "sched-prev": {
+      const cur = state.scheduleDate || todayKey(), m = state.scheduleMode;
+      state.scheduleDate = m === "week" ? addDaysKey(cur, -7) : m === "month" ? addMonthsKey(cur, -1) : addDaysKey(cur, -1);
+      render();
+    } break;
+    case "sched-next": {
+      const cur = state.scheduleDate || todayKey(), m = state.scheduleMode;
+      state.scheduleDate = m === "week" ? addDaysKey(cur, 7) : m === "month" ? addMonthsKey(cur, 1) : addDaysKey(cur, 1);
+      render();
+    } break;
     case "sched-today": state.scheduleDate = todayKey(); render(); break;
+    case "sched-mode": state.scheduleMode = data.mode; render(); break;
+    case "goto-day": state.scheduleDate = data.date; state.scheduleMode = "day"; render(); break;
     case "edit-hours": hoursModal(); break;
     case "clear-search": state.search = { name: "", breed: "" }; render(); break;
     case "go-pets": go("pets"); break;

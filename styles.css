@@ -179,6 +179,22 @@ input,select,textarea{font-family:inherit; font-size:14px}
 .schedule-block{position:absolute; left:4px; right:4px; border-radius:8px; padding:4px 7px; color:#fff; font-size:11px; line-height:1.3;
   overflow:hidden; cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,.2); text-shadow:0 1px 2px rgba(0,0,0,.35)}
 .schedule-block:hover{filter:brightness(1.08)}
+.schedule-col-body{min-width:100px}
+.closed-overlay{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--ink-faint); font-size:12px; font-weight:600}
+
+/* ---------- Schedule: month grid ---------- */
+.month-grid{display:grid; grid-template-columns:repeat(7,1fr); gap:1px; background:var(--line); border:1px solid var(--line); border-radius:12px; overflow:hidden}
+.month-dow{background:var(--surface-2); padding:8px 6px; font-size:11px; font-weight:700; color:var(--ink-faint); text-align:center; text-transform:uppercase; letter-spacing:.04em}
+.month-cell{background:var(--surface); min-height:96px; padding:6px; cursor:pointer; display:flex; flex-direction:column; gap:4px}
+.month-cell:hover{background:var(--surface-2)}
+.month-cell.outside{background:var(--bg); color:var(--ink-faint)}
+.month-cell.outside .month-cell-date{color:var(--ink-faint)}
+.month-cell.today .month-cell-date{color:var(--brand); font-weight:800}
+.month-cell-date{font-size:12px; font-weight:700}
+.month-cell-items{display:flex; flex-direction:column; gap:2px}
+.month-pill{font-size:10px; color:#fff; padding:2px 5px; border-radius:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-shadow:0 1px 2px rgba(0,0,0,.35)}
+.month-more{font-size:10px; color:var(--ink-faint); font-weight:600; padding-left:2px}
+@media(max-width:640px){ .month-cell{min-height:64px} .month-pill{display:none} .month-more{display:none} }
 
 /* ---------- Groomer manager ---------- */
 .groomer-row{display:flex; align-items:center; gap:12px; padding:12px 0; border-bottom:1px solid var(--line)}
