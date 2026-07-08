@@ -1532,6 +1532,11 @@ function startWatchers() {
       // Someone else's change (or this device's own) may need syncing to Calendar —
       // reconcileCalendar() no-ops instantly if this device isn't connected.
       if (changed === "bookings" || changed === "calendarTombstones") reconcileCalendar();
+      // The very first read right after login can race ahead of Firestore's live data
+      // (Promise.all below just snapshots the cache, it doesn't wait for it) — so the
+      // banner's initial check might see an empty settings array and miss the Calendar
+      // ID. Re-check every time settings actually arrives/changes, not just once.
+      if (changed === "settings") updateGcalBanner();
     })
   );
 }
