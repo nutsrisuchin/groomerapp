@@ -25,3 +25,9 @@ const FIREBASE_CONFIG = {
    Admins section, which creates additional Firebase Auth logins behind the
    scenes — no need to touch this file again. */
 const SHOP_LOGIN_EMAIL = "admin@groomingdale.com";
+
+/* Google Calendar connection (see README). Not secret — this is a public
+   OAuth client id, safe to publish. Created in Google Cloud Console →
+   APIs & Services → Clients, with Authorized JavaScript origin set to
+   this app's exact hosted origin (e.g. https://yourname.github.io). */
+const GOOGLE_CLIENT_ID = "478232956382-47bodt6g72l7bqj8a8ql8e7566kbegnk.apps.googleusercontent.com";

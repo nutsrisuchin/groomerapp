@@ -78,6 +78,7 @@ any data regardless).
 - **Groomers** — add/remove groomers, each with a color (the full Google Calendar palette,
   11 colors including yellow). Seeded with **Mint, Mikka, Boat**.
 - **Admins** — add/remove people who can log into the app, each with their own name + PIN.
+- **Calendar** — connect a Google account and set the shared Calendar ID that bookings sync to.
 
 ## Files
 | File | Purpose |
@@ -86,17 +87,46 @@ any data regardless).
 | `styles.css` | Styling |
 | `firebase-config.js` | Your Firebase project's connection details (fill in, see setup above) |
 | `db.js` | Firestore storage + per-admin PIN auth |
+| `calendar.js` | Google Calendar OAuth connection + event sync |
 | `app.js` | App logic & screens |
 
-## Google Calendar (next phase — not wired yet)
-The data is already shaped for it:
-- Each **groomer** carries a Google Calendar `calendarColorId` (colors map to Calendar's palette).
-- Each **booking** has a reserved `calendarEventId`, a `recurrence` value that maps to an
-  RRULE (`weekly` → `FREQ=WEEKLY`, `biweekly` → `FREQ=WEEKLY;INTERVAL=2`, `monthly` → `FREQ=MONTHLY`),
-  an optional `recurrenceUntil` end date, and `serviceHours` (hours per service) to compute
-  the event's duration.
+## Google Calendar
 
-**Planned:** on saving a booking, create/update a Calendar event whose **title** = `Name · Breed`,
-**color** = groomer's color, **duration** = sum of `serviceHours`, and **recurrence** = the
-chosen repeat rule (+ until date); deleting removes the event. This needs a Google OAuth
-client (Calendar API) — I'll add a "Connect Google Calendar" button then.
+Bookings sync to **one shared Google Calendar** — a groomer's color tells their events
+apart, no per-groomer calendar needed. Setup happens once; after that, anyone with edit
+access to that calendar just clicks **Connect** in the app to start syncing from their browser.
+
+### One-time setup (Google Cloud Console)
+Uses the same Google Cloud project as Firebase — no new project needed.
+1. **Enable the Calendar API** — [console.cloud.google.com/apis/library/calendar-json.googleapis.com](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com),
+   confirm your project is selected → **Enable**.
+2. **Configure OAuth consent** — APIs & Services → *Google Auth Platform* → **Get started** →
+   fill in app name + your email → Audience: **External** → Contact: your email → Create.
+   Then **Data Access** → *Add or remove scopes* → add `.../auth/calendar.events` (use "Manually
+   add scopes" if it's not in the list — that means the Calendar API isn't enabled yet, see step 1)
+   → Save. Then **Audience** → *Test users* → add every Google account that will connect
+   (your demo account now, the shop's real account later).
+3. **Create the OAuth Client ID** — **Clients** → *Create client* → Web application →
+   Authorized JavaScript origins: your exact hosted origin, e.g. `https://yourname.github.io`
+   (origin only, no path) → Create. Copy the Client ID (ends in `.apps.googleusercontent.com`,
+   not secret) into `GOOGLE_CLIENT_ID` in [firebase-config.js](firebase-config.js).
+4. **Get the shared Calendar ID** — open the shop's shared Google Calendar → Settings →
+   find it in the calendar list → **Integrate calendar** → copy the **Calendar ID**.
+
+### In the app
+Open the **Calendar** tab → paste the Calendar ID → *Save Calendar ID* → **Connect Google
+Calendar** (signs in with whichever Google account is connecting; needs edit access to that
+calendar). From then on, in that browser: creating or editing a booking creates/updates a
+matching Calendar event (title = `Name · Breed`, color = the groomer's, duration = the sum
+of that booking's service hours, recurrence = the chosen repeat rule + until date); deleting
+a booking removes its event.
+
+The connection lasts about an hour (browser memory only, nothing persisted) — reconnect
+anytime from the Calendar tab. If it's not connected, bookings still save normally; Calendar
+sync is always best-effort and never blocks or undoes a save.
+
+### Switching from the demo calendar to the real one
+Once testing looks good: share the shop's real Google Calendar with whichever account(s)
+will connect (give them "Make changes to events" permission), add that account under
+*Test users* in step 2 above, then just paste the real Calendar ID into the app's Calendar
+tab and reconnect — no code changes needed.

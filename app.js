@@ -32,7 +32,8 @@ const GROOMER_COLORS = [
 ];
 
 /* ---------- state ---------- */
-const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], search: { name: "", breed: "" } };
+const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], search: { name: "", breed: "" } };
+const getCalendarId = () => (state.settings.find((s) => s.id === "calendar") || {}).calendarId || "";
 
 /* ---------- tiny DOM helpers ---------- */
 const $  = (s, r = document) => r.querySelector(s);
@@ -145,6 +146,7 @@ function render() {
   else if (state.view === "bookings") v.innerHTML = viewBookings();
   else if (state.view === "groomers") v.innerHTML = viewGroomers();
   else if (state.view === "admins") v.innerHTML = viewAdmins();
+  else if (state.view === "calendar") v.innerHTML = viewCalendarSettings();
   bindView();
   window.scrollTo({ top: 0 });
 }
@@ -382,6 +384,32 @@ function viewAdmins() {
           <div class="faint" style="font-size:12px">${esc(a.email)}</div></div>
         <button class="btn sm danger" data-action="del-admin" data-id="${a.uid}" ${a.uid === myUid ? "disabled" : ""}>Remove</button>
       </div>`).join("") || emptyInline("No additional admins yet.")}
+  </div>`;
+}
+
+/* ---------- CALENDAR SETTINGS ---------- */
+function viewCalendarSettings() {
+  const calendarId = getCalendarId();
+  const connected = GCal.isConnected();
+  return `
+  <div class="page-head"><h1>Google Calendar</h1></div>
+  <div class="card pad">
+    <div class="spread" style="margin-bottom:14px; gap:16px">
+      <div>
+        <strong>${connected ? "🟢 Connected" : "⚪ Not connected"}</strong>
+        <div class="faint" style="font-size:12px">${connected
+          ? "Bookings created or edited in this browser will sync to the calendar below."
+          : "Connect once per browser session — the connection lasts about an hour, then just reconnect."}</div>
+      </div>
+      <button class="btn ${connected ? "" : "primary"}" data-action="gcal-connect">${connected ? "Reconnect" : "Connect Google Calendar"}</button>
+    </div>
+    <div class="divider"></div>
+    <div class="field"><label>Shared Calendar ID</label>
+      <input id="gcal-id" value="${esc(calendarId)}" placeholder="e.g. abc123@group.calendar.google.com">
+      <div class="help">Find it under that calendar's Settings → Integrate calendar → Calendar ID.
+        Every booking syncs here, regardless of who connects — the groomer's color tells them apart.</div>
+    </div>
+    <button class="btn primary sm" data-action="gcal-save-id">Save Calendar ID</button>
   </div>`;
 }
 
@@ -762,7 +790,25 @@ function bookingModal(booking, prefillPet) {
     await DB.put("bookings", rec);
     upsertLocal("bookings", rec);
     closeModal(); toast(booking ? "Booking updated" : "Booking created"); render();
+    syncBookingToCalendar(rec);
   };
+}
+// Best-effort: a Calendar failure here never undoes or blocks the booking save above.
+async function syncBookingToCalendar(rec) {
+  const calendarId = getCalendarId();
+  if (!calendarId || !GCal.isConnected()) return;
+  try {
+    const eventId = await GCal.syncBooking(calendarId, rec, groomerById(rec.groomerId));
+    if (eventId !== rec.calendarEventId) {
+      rec.calendarEventId = eventId;
+      await DB.put("bookings", rec);
+      upsertLocal("bookings", rec);
+      render();
+    }
+  } catch (err) {
+    console.error("Calendar sync failed", err);
+    toast("Saved, but Google Calendar sync failed — try reconnecting.");
+  }
 }
 function toLocalInput(d) {
   const dt = new Date(d); const p = (n) => String(n).padStart(2, "0");
@@ -885,7 +931,14 @@ async function handleAction(action, data) {
     case "book-pet": bookingModal(null, state.pets.find((p) => p.id === data.id)); break;
     case "edit-booking": bookingModal(state.bookings.find((b) => b.id === data.id)); break;
     case "del-booking":
-      if (confirm("Delete this booking?")) { await DB.del("bookings", data.id); removeLocal("bookings", data.id); toast("Booking deleted"); render(); }
+      if (confirm("Delete this booking?")) {
+        const deleted = state.bookings.find((b) => b.id === data.id);
+        await DB.del("bookings", data.id); removeLocal("bookings", data.id); toast("Booking deleted"); render();
+        const calendarId = getCalendarId();
+        if (deleted && deleted.calendarEventId && calendarId && GCal.isConnected()) {
+          GCal.deleteBooking(calendarId, deleted.calendarEventId).catch((err) => console.error("Calendar delete failed", err));
+        }
+      }
       break;
     case "new-groomer": groomerModal(null); break;
     case "edit-groomer": groomerModal(state.groomers.find((g) => g.id === data.id)); break;
@@ -900,6 +953,16 @@ async function handleAction(action, data) {
       if (confirm("Remove this admin? They'll immediately lose access.")) {
         await DB.removeAdmin(data.id); removeLocal("admins", data.id); toast("Admin removed"); render();
       } break;
+    case "gcal-connect":
+      try { await GCal.connect(); toast("Connected to Google Calendar"); render(); }
+      catch (err) { toast("Couldn't connect — check your pop-up blocker and try again."); }
+      break;
+    case "gcal-save-id": {
+      const id = $("#gcal-id").value.trim();
+      if (!id) { toast("Please enter a Calendar ID"); break; }
+      const rec = { id: "calendar", calendarId: id, updatedAt: Date.now() };
+      await DB.put("settings", rec); upsertLocal("settings", rec); toast("Calendar ID saved"); render();
+    } break;
     case "clear-search": state.search = { name: "", breed: "" }; render(); break;
     case "go-pets": go("pets"); break;
   }
@@ -919,7 +982,7 @@ document.addEventListener("click", (e) => {
 /* ===================================================================
    AUTH GATE + BOOT
 =================================================================== */
-const COLLECTIONS = ["pets", "groomers", "bookings", "admins"];
+const COLLECTIONS = ["pets", "groomers", "bookings", "admins", "settings"];
 let watchers = [];
 
 function startWatchers() {
@@ -971,7 +1034,7 @@ DB.onAuthChange(async (user) => {
   try {
     await DB.seed();
     startWatchers();
-    [state.pets, state.groomers, state.bookings, state.admins] = await Promise.all(
+    [state.pets, state.groomers, state.bookings, state.admins, state.settings] = await Promise.all(
       COLLECTIONS.map((name) => DB.getAll(name))
     );
     $("#login-gate").hidden = true;
