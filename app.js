@@ -40,7 +40,7 @@ const GROOMER_COLORS = [
 ];
 
 /* ---------- state ---------- */
-const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], scheduleDate: "", search: { name: "", breed: "" } };
+const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], scheduleDate: "", search: { name: "", breed: "" } };
 const getCalendarId = () => (state.settings.find((s) => s.id === "calendar") || {}).calendarId || "";
 const getCustomBreeds = () => (state.settings.find((s) => s.id === "breeds") || {}).list || [];
 // Static top-20 list plus any breed staff have typed in before, deduped case-insensitively.
@@ -83,6 +83,37 @@ function emailForName(name) {
   const slug = n.replace(/[^a-z0-9]+/g, "-").replace(/(^-+|-+$)/g, "");
   return `${slug}@pawfect.local`;
 }
+function currentAdminName() {
+  if (DB.currentEmail() === SHOP_LOGIN_EMAIL) return "Owner";
+  const a = state.admins.find((x) => x.uid === DB.currentUid());
+  return a ? a.name : "Someone";
+}
+
+/* ---------- notifications / activity log ---------- */
+// Best-effort, same spirit as Calendar sync: never blocks or fails the action it's logging.
+async function logActivity(type, action, summary) {
+  try {
+    const rec = { id: DB.uid("act"), type, action, summary, actorName: currentAdminName(), at: Date.now() };
+    await DB.put("activity", rec);
+    upsertLocal("activity", rec);
+  } catch (err) { console.error("Activity log failed", err); }
+}
+function timeAgo(ms) {
+  const diff = Date.now() - ms;
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min} min ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} hr ago`;
+  const day = Math.floor(hr / 24);
+  if (day === 1) return "yesterday";
+  if (day < 7) return `${day} days ago`;
+  return fmtDate(ms);
+}
+const ACTIVITY_ICON = {
+  booking: { created: "📅", updated: "✏️", deleted: "🗑" },
+  groomer: { created: "🧑‍🎨", updated: "✏️", deleted: "🗑" },
+};
 
 /* ---------- date helpers ---------- */
 function fmtDate(d) { return new Date(d).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }); }
@@ -288,7 +319,7 @@ function viewHome() {
 
   return `
   <div class="page-head">
-    <div><h1>Welcome back 🐾</h1><div class="muted">Find a pet, take a booking, manage your team.</div></div>
+    <div><h1>Welcome back 🐾</h1><div class="muted">Your Grooming Partner.</div></div>
     <button class="btn primary" data-action="new-booking">＋ New Booking</button>
   </div>
 
@@ -1333,7 +1364,7 @@ document.addEventListener("click", (e) => {
 /* ===================================================================
    AUTH GATE + BOOT
 =================================================================== */
-const COLLECTIONS = ["pets", "groomers", "bookings", "admins", "settings"];
+const COLLECTIONS = ["pets", "groomers", "bookings", "admins", "settings", "activity"];
 let watchers = [];
 
 function startWatchers() {
@@ -1388,7 +1419,7 @@ DB.onAuthChange(async (user) => {
   try {
     await DB.seed();
     startWatchers();
-    [state.pets, state.groomers, state.bookings, state.admins, state.settings] = await Promise.all(
+    [state.pets, state.groomers, state.bookings, state.admins, state.settings, state.activity] = await Promise.all(
       COLLECTIONS.map((name) => DB.getAll(name))
     );
     $("#login-gate").hidden = true;
