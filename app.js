@@ -581,20 +581,21 @@ function viewBookings() {
       ${pastDue.map((b) => bookingRow(b, { showResolveActions: true })).join("")}
     </div>` : ""}
 
-  ${upcoming.length ? `<div class="card">${upcoming.map((b) => bookingRow(b)).join("")}</div>`
-    : (pastDue.length ? "" : emptyBlock("📅", "No bookings yet", "Create a booking — it's ready to sync to Google Calendar later.", "new-booking", "New booking"))}
+  <div class="card bookings-section" style="margin-bottom:16px">
+    <div class="card pad" style="padding-bottom:0; border:0"><h3 class="section-title">📆 Upcoming Bookings (${upcoming.length})</h3></div>
+    ${upcoming.length ? upcoming.map((b) => bookingRow(b)).join("")
+      : emptyBlock("📅", "No upcoming bookings", "Create a booking — it's ready to sync to Google Calendar later.", "new-booking", "New booking")}
+  </div>
 
-  ${completed.length ? `
-    <details class="card bookings-collapsible" style="margin-top:16px">
-      <summary>Completed Bookings (${completed.length})</summary>
-      ${completed.map((b) => bookingRow(b)).join("")}
-    </details>` : ""}
+  <details class="card bookings-collapsible" style="margin-bottom:16px">
+    <summary>Completed Bookings (${completed.length})</summary>
+    ${completed.length ? completed.map((b) => bookingRow(b)).join("") : emptyInline("No completed bookings yet.")}
+  </details>
 
-  ${cancelled.length ? `
-    <details class="card bookings-collapsible" style="margin-top:16px">
-      <summary>Cancelled Bookings (${cancelled.length})</summary>
-      ${cancelled.map((b) => bookingRow(b)).join("")}
-    </details>` : ""}`;
+  <details class="card bookings-collapsible">
+    <summary>Cancelled Bookings (${cancelled.length})</summary>
+    ${cancelled.length ? cancelled.map((b) => bookingRow(b)).join("") : emptyInline("No cancelled bookings yet.")}
+  </details>`;
 }
 
 function activityRow(a) {

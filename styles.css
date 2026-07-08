@@ -221,6 +221,7 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 .status-cancelled{color:var(--danger); background:rgba(229,72,77,.12)}
 .pastdue-card{border-color:#f5c26b}
 .pastdue-title{color:#a8710a}
+.pastdue-card .empty, .bookings-section .empty{border:0; box-shadow:none; border-radius:0}
 .bookings-collapsible summary{cursor:pointer; font-weight:700; list-style:none; padding:16px 20px}
 .bookings-collapsible summary::-webkit-details-marker{display:none}
 .bookings-collapsible summary::before{content:"▸"; display:inline-block; margin-right:8px; transition:transform .15s}
