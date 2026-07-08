@@ -199,6 +199,20 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 }
 .svc-name{font-size:13px; font-weight:600; color:var(--ink)}
 .svc-row .b-hr{margin-left:auto; width:80px; flex:none}
+/* iOS Safari doesn't fully honor appearance:none on checkboxes (was rendering as a
+   full-width toggle switch, not a small box) — so the real checkbox is made fully
+   invisible here and a plain <span> (zero native form-control rendering, can't be
+   affected by any platform's checkbox theme) draws the visual box + checkmark instead. */
+.svc-real-checkbox{position:absolute; opacity:0; width:1px; height:1px; pointer-events:none}
+.svc-box{
+  width:18px; height:18px; flex:none; border-radius:5px; border:1.5px solid var(--ink-faint);
+  background:var(--surface); position:relative; box-sizing:border-box;
+}
+.svc-real-checkbox:checked + .svc-box{background:var(--brand); border-color:var(--brand)}
+.svc-real-checkbox:checked + .svc-box::after{
+  content:""; position:absolute; left:5px; top:2px; width:5px; height:10px;
+  border:solid #fff; border-width:0 2px 2px 0; transform:rotate(45deg);
+}
 .dot{width:10px; height:10px; border-radius:50%; display:inline-block; flex:none}
 .groomer-tag{display:inline-flex; align-items:center; gap:7px; font-weight:600; font-size:13px}
 .recur-badge{font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--brand); background:rgba(124,92,255,.1); padding:2px 8px; border-radius:6px}

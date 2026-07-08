@@ -1195,7 +1195,8 @@ function bookingModal(booking, prefillPet) {
       <div class="stack" style="gap:8px">
         ${SERVICES.map((s) => `
           <label class="svc-row">
-            <input type="checkbox" class="b-svc" data-svc="${esc(s)}" ${initialServices.includes(s) ? "checked" : ""}>
+            <input type="checkbox" class="b-svc svc-real-checkbox" data-svc="${esc(s)}" ${initialServices.includes(s) ? "checked" : ""}>
+            <span class="svc-box" aria-hidden="true"></span>
             <span class="svc-name">${esc(s)}</span>
             <input type="number" class="b-hr" data-svc="${esc(s)}" min="0" step="0.25" placeholder="hrs"
               value="${esc(initialHours[s] ?? "")}" ${initialServices.includes(s) ? "" : "disabled"}>
