@@ -145,24 +145,16 @@ browser memory only, deliberately, since a true always-on connection that surviv
 would need a small backend to hold a real refresh token.) If it's not connected, bookings
 still save normally; Calendar sync is always best-effort and never blocks or undoes a save.
 
-The app doesn't keep you logged in across a refresh or a reopened browser, by design —
-every fresh page load shows the name + PIN screen again (see *Login doesn't persist*
-below), which also means the Calendar connection is always starting fresh too. If Calendar
-sync is set up (a Calendar ID is saved) but this browser isn't connected once you're back
-in, a yellow banner appears at the top of every page with a **Connect** button, and stays
-there (not a one-time popup that's easy to miss or accidentally dismiss) until you connect
-or explicitly dismiss it for that session. Google requires an actual click to open the
-sign-in popup, so this can't happen fully automatically, but nothing has to be
-remembered — the reminder is just always visible when it's relevant.
-
-### Login doesn't persist
-Refreshing the page, closing and reopening the tab, or reopening the browser always shows
-the name + PIN screen again — the app never silently signs you back in. This is intentional:
-it keeps things simple to reason about (every session starts from a clean, known state,
-including Calendar being disconnected until re-confirmed) and sidesteps a timing issue
-where an auto-resumed session could reach app logic before Firestore had actually delivered
-the data it depends on. The trade-off is exactly that — everyone re-enters their name and
-PIN more often than a typical "stay signed in" app.
+The app *does* keep you logged in across a refresh or reopened browser (Firebase's normal
+session persistence) — but the Calendar connection never does, on purpose (see above), so
+it's always starting fresh regardless of how the app login happened. If Calendar sync is
+set up (a Calendar ID is saved) but this browser isn't connected, a yellow banner appears
+at the top of every page with a **Connect** button, and stays there (not a one-time popup
+that's easy to miss or accidentally dismiss) until you connect or explicitly dismiss it for
+that session. Google requires an actual click to open the sign-in popup, so this can't
+happen fully automatically, but nothing has to be remembered — the reminder is just always
+visible when it's relevant, independent of whether you just logged in or the session was
+auto-resumed.
 
 ### Multi-device syncing: it doesn't matter who's connected
 Only one device needs to be connected at any given moment for everyone's changes to reach

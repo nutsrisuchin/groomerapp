@@ -35,11 +35,14 @@
   const auth = firebase.auth();
   const store = firebase.firestore();
 
-  // No session persistence, by design: every fresh page load (refresh, reopened tab,
-  // reopened browser) should require typing the name + PIN again, rather than silently
-  // resuming a previous login. Also sidesteps the race where auto-resumed sessions
-  // could reach app logic before Firestore had delivered the data it depends on.
-  auth.setPersistence(firebase.auth.Auth.Persistence.NONE)
+  // Session persists across refreshes/reopens (Firebase's default) — Google Calendar
+  // always needs reconnecting fresh regardless (that's a separate, deliberately
+  // memory-only connection; see calendar.js), and the app-wide banner already prompts
+  // for that independent of login state, so forcing a fresh PIN entry too added no
+  // real benefit. Every collection re-syncs live via onSnapshot regardless of how the
+  // session started, so an auto-resumed session reaching app logic before Firestore's
+  // first snapshot arrives just means a brief flash of empty state, not stale data.
+  auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
     .catch((err) => console.error("Failed to set auth persistence", err));
 
   const cache = { pets: [], groomers: [], bookings: [], admins: [] };
