@@ -40,7 +40,7 @@ const GROOMER_COLORS = [
 ];
 
 /* ---------- state ---------- */
-const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], scheduleDate: "", search: { name: "", breed: "" } };
+const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], scheduleDate: "", scheduleHiddenGroomers: [], search: { name: "", breed: "" } };
 const getCalendarId = () => (state.settings.find((s) => s.id === "calendar") || {}).calendarId || "";
 const getCustomBreeds = () => (state.settings.find((s) => s.id === "breeds") || {}).list || [];
 // Static top-20 list plus any breed staff have typed in before, deduped case-insensitively.
@@ -590,8 +590,15 @@ function viewCalendarSettings() {
   </div>`;
 }
 
-/* ---------- SCHEDULE (day/week timeline + month grid + free slots) ---------- */
+/* ---------- SCHEDULE (Google-Calendar-style: sidebar + toolbar + views) ---------- */
 const PX_PER_HOUR = 60;
+
+function sameMonth(dateStr, refDateStr) {
+  const a = new Date(dateStr + "T00:00:00"), b = new Date(refDateStr + "T00:00:00");
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
+}
+function visibleGroomers() { return state.groomers.filter((g) => !state.scheduleHiddenGroomers.includes(g.id)); }
+function nowMinutesToday() { const n = new Date(); return { dateStr: dateKey(n), min: n.getHours() * 60 + n.getMinutes() }; }
 
 function viewSchedule() {
   if (!state.scheduleDate) state.scheduleDate = todayKey();
@@ -599,28 +606,63 @@ function viewSchedule() {
   const mode = state.scheduleMode, dateStr = state.scheduleDate;
   const title = mode === "day" ? fmtDateKey(dateStr) : mode === "week" ? fmtWeekRange(dateStr) : fmtMonthKey(dateStr);
 
-  const header = `
-  <div class="page-head">
-    <h1>Schedule</h1>
-    <button class="btn sm" data-action="edit-hours">Edit hours</button>
-  </div>
-  <div class="card pad" style="margin-bottom:16px">
-    <div class="row" style="justify-content:space-between; flex-wrap:wrap; gap:10px">
-      <div class="mode-tabs">
-        ${["day", "week", "month"].map((m) => `<button class="nav-btn ${mode === m ? "active" : ""}" data-action="sched-mode" data-mode="${m}">${m[0].toUpperCase()}${m.slice(1)}</button>`).join("")}
+  const sidebar = `
+  <aside class="gcal-sidebar">
+    <div class="mini-cal">
+      <div class="mini-cal-head">
+        <strong>${fmtMonthKey(dateStr)}</strong>
+        <div class="row" style="gap:2px">
+          <button class="icon-btn" data-action="mini-cal-prev" aria-label="Previous month">‹</button>
+          <button class="icon-btn" data-action="mini-cal-next" aria-label="Next month">›</button>
+        </div>
       </div>
-      <div class="row">
-        <button class="btn sm" data-action="sched-prev">← Prev</button>
-        <button class="btn sm" data-action="sched-today">Today</button>
-        <button class="btn sm" data-action="sched-next">Next →</button>
+      <div class="mini-cal-grid">
+        ${DAY_NAMES_SHORT.map((d) => `<div class="mini-dow">${d[0]}</div>`).join("")}
+        ${monthGridDates(dateStr).map((d) => {
+          const inMonth = sameMonth(d, dateStr);
+          const isToday = d === todayKey();
+          const isSel = d === dateStr;
+          return `<button class="mini-day ${inMonth ? "" : "outside"} ${isToday ? "today" : ""} ${isSel ? "selected" : ""}" data-action="sched-jump" data-date="${d}">${new Date(d + "T00:00:00").getDate()}</button>`;
+        }).join("")}
       </div>
-      <input type="date" id="sched-date-input" value="${dateStr}">
     </div>
-    <div style="margin-top:10px; font-weight:700">${title}</div>
+    <div class="sidebar-groomers">
+      <div class="section-title" style="margin:16px 0 8px">My groomers</div>
+      ${state.groomers.map((g) => `
+        <label class="groomer-toggle">
+          <input type="checkbox" class="sched-groomer-toggle" data-id="${g.id}" ${state.scheduleHiddenGroomers.includes(g.id) ? "" : "checked"}>
+          <span class="dot" style="background:${g.color}"></span> ${esc(g.name)}
+        </label>`).join("") || emptyInline("No groomers yet.")}
+    </div>
+    <button class="btn sm block" style="margin-top:14px" data-action="edit-hours">Edit hours</button>
+  </aside>`;
+
+  const toolbar = `
+  <div class="card pad gcal-toolbar">
+    <div class="row">
+      <button class="btn sm" data-action="sched-today">Today</button>
+      <button class="icon-btn" data-action="sched-prev" aria-label="Previous">‹</button>
+      <button class="icon-btn" data-action="sched-next" aria-label="Next">›</button>
+      <div class="gcal-title">${title}</div>
+    </div>
+    <select id="sched-mode-select" class="sched-mode-select">
+      <option value="day" ${mode === "day" ? "selected" : ""}>Day</option>
+      <option value="week" ${mode === "week" ? "selected" : ""}>Week</option>
+      <option value="month" ${mode === "month" ? "selected" : ""}>Month</option>
+    </select>
   </div>`;
 
   const body = mode === "day" ? scheduleBodyDay(dateStr) : mode === "week" ? scheduleBodyWeek(dateStr) : scheduleBodyMonth(dateStr);
-  return header + body;
+
+  return `
+  <div class="page-head"><h1>Schedule</h1></div>
+  <div class="gcal-layout">
+    ${sidebar}
+    <div class="gcal-main">
+      ${toolbar}
+      ${body}
+    </div>
+  </div>`;
 }
 
 function scheduleBlockHtml(it, openMin, closeMin, color) {
@@ -636,16 +678,24 @@ function scheduleBodyDay(dateStr) {
   const hours = getBusinessHours();
   const dow = new Date(dateStr + "T00:00:00").getDay();
   if ((hours.closedDays || []).includes(dow)) return emptyBlock("🌙", "Closed", `The shop is closed on ${DAY_NAMES[dow]}s.`, null, null);
-  if (!state.groomers.length) return emptyBlock("🧑‍🎨", "No groomers yet", "Add a groomer to see their schedule here.", "new-groomer", "Add groomer");
+  const groomers = visibleGroomers();
+  if (!groomers.length) {
+    return state.groomers.length
+      ? emptyBlock("🙈", "All groomers hidden", "Check a groomer in the sidebar to see their schedule.", null, null)
+      : emptyBlock("🧑‍🎨", "No groomers yet", "Add a groomer to see their schedule here.", "new-groomer", "Add groomer");
+  }
 
   const openMin = toMinutes(hours.open), closeMin = toMinutes(hours.close);
   const hourMarks = []; for (let m = openMin; m <= closeMin; m += 60) hourMarks.push(m);
   const all = bookingsOnDate(dateStr);
-  const columns = state.groomers.map((g) => {
+  const columns = groomers.map((g) => {
     const items = all.filter((it) => it.booking.groomerId === g.id);
     return { groomer: g, items, free: freeSlots(items, openMin, closeMin) };
   });
   const gridHeight = ((closeMin - openMin) / 60) * PX_PER_HOUR;
+  const now = nowMinutesToday();
+  const nowLine = (now.dateStr === dateStr && now.min >= openMin && now.min <= closeMin)
+    ? `<div class="now-line" style="top:${((now.min - openMin) / 60) * PX_PER_HOUR}px; left:56px; right:0"><span class="now-dot"></span></div>` : "";
 
   const grid = `
   <div class="card pad" style="overflow-x:auto">
@@ -660,6 +710,7 @@ function scheduleBodyDay(dateStr) {
             ${col.items.map((it) => scheduleBlockHtml(it, openMin, closeMin, col.groomer.color)).join("")}
           </div>
         </div>`).join("")}
+      ${nowLine}
     </div>
   </div>`;
 
@@ -688,11 +739,14 @@ function scheduleBodyWeek(dateStr) {
   const hourMarks = []; for (let m = openMin; m <= closeMin; m += 60) hourMarks.push(m);
   const gridHeight = ((closeMin - openMin) / 60) * PX_PER_HOUR;
   const today = todayKey();
+  const hiddenIds = state.scheduleHiddenGroomers;
+  const now = nowMinutesToday();
 
   const cols = days.map((d) => {
     const dow = new Date(d + "T00:00:00").getDay();
     const closed = (hours.closedDays || []).includes(dow);
-    return { dateStr: d, dow, closed, items: closed ? [] : bookingsOnDate(d) };
+    const items = closed ? [] : bookingsOnDate(d).filter((it) => !hiddenIds.includes(it.booking.groomerId));
+    return { dateStr: d, dow, closed, items };
   });
 
   return `
@@ -703,12 +757,15 @@ function scheduleBodyWeek(dateStr) {
       </div>
       ${cols.map((col) => `
         <div class="schedule-col">
-          <div class="schedule-col-head" data-action="goto-day" data-date="${col.dateStr}" style="cursor:pointer">
-            ${DAY_NAMES_SHORT[col.dow]} ${new Date(col.dateStr + "T00:00:00").getDate()}${col.dateStr === today ? " •" : ""}
+          <div class="schedule-col-head week" data-action="goto-day" data-date="${col.dateStr}" style="cursor:pointer">
+            <div class="day-name">${DAY_NAMES_SHORT[col.dow]}</div>
+            <span class="day-num ${col.dateStr === today ? "today" : ""}">${new Date(col.dateStr + "T00:00:00").getDate()}</span>
           </div>
           <div class="schedule-col-body" style="height:${gridHeight}px">
             ${col.closed ? `<div class="closed-overlay">Closed</div>`
               : col.items.map((it) => scheduleBlockHtml(it, openMin, closeMin, groomerColor(it.booking.groomerId))).join("")}
+            ${(col.dateStr === now.dateStr && now.min >= openMin && now.min <= closeMin)
+              ? `<div class="now-line" style="top:${((now.min - openMin) / 60) * PX_PER_HOUR}px; left:0; right:0"><span class="now-dot"></span></div>` : ""}
           </div>
         </div>`).join("")}
     </div>
@@ -720,17 +777,18 @@ function scheduleBodyMonth(dateStr) {
   const viewedMonth = new Date(dateStr + "T00:00:00").getMonth();
   const today = todayKey();
   const maxShow = 3;
+  const hiddenIds = state.scheduleHiddenGroomers;
 
   const cells = monthGridDates(dateStr).map((d) => {
     const dow = new Date(d + "T00:00:00").getDay();
     const closed = (hours.closedDays || []).includes(dow);
     const inMonth = new Date(d + "T00:00:00").getMonth() === viewedMonth;
-    const items = bookingsOnDate(d);
+    const items = bookingsOnDate(d).filter((it) => !hiddenIds.includes(it.booking.groomerId));
     const shown = items.slice(0, maxShow);
     const more = items.length - shown.length;
     return `
-      <div class="month-cell ${inMonth ? "" : "outside"} ${d === today ? "today" : ""}" data-action="goto-day" data-date="${d}">
-        <div class="month-cell-date">${new Date(d + "T00:00:00").getDate()}${closed ? " 🌙" : ""}</div>
+      <div class="month-cell ${inMonth ? "" : "outside"}" data-action="goto-day" data-date="${d}">
+        <div class="month-cell-date"><span class="day-num ${d === today ? "today" : ""}">${new Date(d + "T00:00:00").getDate()}</span>${closed ? " 🌙" : ""}</div>
         <div class="month-cell-items">
           ${shown.map((it) => `<div class="month-pill" style="background:${groomerColor(it.booking.groomerId)}">${esc(fmtMinutes(it.startMin))} ${esc(it.booking.petName)}</div>`).join("")}
           ${more > 0 ? `<div class="month-more">+${more} more</div>` : ""}
@@ -1275,9 +1333,16 @@ function bindView() {
   if (qn) qn.oninput = () => { state.search.name = qn.value; renderHomeResults(); };
   if (qb) qb.oninput = () => { state.search.breed = qb.value; renderHomeResults(); };
 
-  // schedule date jump
-  const schedDate = $("#sched-date-input");
-  if (schedDate) schedDate.onchange = () => { state.scheduleDate = schedDate.value; render(); };
+  // schedule view-mode dropdown + groomer visibility toggles
+  const schedMode = $("#sched-mode-select");
+  if (schedMode) schedMode.onchange = () => { state.scheduleMode = schedMode.value; render(); };
+  $$(".sched-groomer-toggle").forEach((cb) => cb.onchange = () => {
+    const id = cb.dataset.id;
+    state.scheduleHiddenGroomers = cb.checked
+      ? state.scheduleHiddenGroomers.filter((x) => x !== id)
+      : [...state.scheduleHiddenGroomers, id];
+    render();
+  });
 
   // actions
   $$("[data-action]").forEach((el) => el.onclick = () => handleAction(el.dataset.action, el.dataset));
@@ -1358,8 +1423,10 @@ async function handleAction(action, data) {
       render();
     } break;
     case "sched-today": state.scheduleDate = todayKey(); render(); break;
-    case "sched-mode": state.scheduleMode = data.mode; render(); break;
     case "goto-day": state.scheduleDate = data.date; state.scheduleMode = "day"; render(); break;
+    case "sched-jump": state.scheduleDate = data.date; render(); break;
+    case "mini-cal-prev": state.scheduleDate = addMonthsKey(state.scheduleDate || todayKey(), -1); render(); break;
+    case "mini-cal-next": state.scheduleDate = addMonthsKey(state.scheduleDate || todayKey(), 1); render(); break;
     case "edit-hours": hoursModal(); break;
     case "clear-search": state.search = { name: "", breed: "" }; render(); break;
     case "go-pets": go("pets"); break;
