@@ -19,7 +19,7 @@
   --radius:    16px;
   --radius-sm: 10px;
 }
-*{box-sizing:border-box}
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
 [hidden]{display:none !important}
 html,body{margin:0;padding:0}
 body{
@@ -27,8 +27,9 @@ body{
   background:var(--bg); color:var(--ink);
   -webkit-font-smoothing:antialiased;
 }
-button{font-family:inherit; cursor:pointer}
-input,select,textarea{font-family:inherit; font-size:14px}
+button{font-family:inherit; cursor:pointer; touch-action:manipulation}
+/* 16px minimum — anything smaller makes iOS Safari auto-zoom the page on focus */
+input,select,textarea{font-family:inherit; font-size:16px}
 
 /* ---------- Login gate ---------- */
 .login-gate{
@@ -52,6 +53,7 @@ input,select,textarea{font-family:inherit; font-size:14px}
   position:sticky; top:0; z-index:20;
   display:flex; align-items:center; justify-content:space-between;
   gap:16px; padding:12px 24px;
+  padding-top:max(12px, env(safe-area-inset-top)); /* clears the notch/status bar in home-screen mode */
   background:rgba(255,255,255,.82); backdrop-filter:blur(10px);
   border-bottom:1px solid var(--line);
 }
@@ -278,7 +280,7 @@ input,select,textarea{font-family:inherit; font-size:14px}
 .modal h2{margin:0 0 4px; font-size:20px}
 
 /* ---------- Toast ---------- */
-.toast{position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+.toast{position:fixed; bottom:max(24px, env(safe-area-inset-bottom)); left:50%; transform:translateX(-50%);
   background:var(--ink); color:#fff; padding:12px 20px; border-radius:12px; box-shadow:var(--shadow-lg); z-index:80; font-weight:600; font-size:14px}
 
 /* ---------- Misc ---------- */
