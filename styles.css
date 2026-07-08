@@ -190,12 +190,15 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 
 /* ---------- Chips / badges ---------- */
 .chip{display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:600; background:var(--surface-2); color:var(--ink-soft)}
-/* Booking form's per-service checkbox + hours row — deliberately no flex-grow/flex-basis
-   tricks on the chip (that caused it to stretch and push its label off to one edge on
-   both desktop and mobile); everything just sizes to its own content and wraps if needed. */
-.service-row{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
-.service-row .chip{flex:none; width:fit-content; white-space:nowrap}
-.service-row .b-hr{flex:none; width:80px}
+/* Booking form's per-service checkbox + hours row. A dedicated, isolated class (not
+   reusing .chip) so nothing shared elsewhere can affect it. The whole row is one <label>,
+   so tapping the service name also toggles the checkbox — a bigger, easier touch target. */
+.svc-row{
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap; width:100%;
+  padding:8px 10px; border-radius:10px; background:var(--surface-2); cursor:pointer;
+}
+.svc-name{font-size:13px; font-weight:600; color:var(--ink)}
+.svc-row .b-hr{margin-left:auto; width:80px; flex:none}
 .dot{width:10px; height:10px; border-radius:50%; display:inline-block; flex:none}
 .groomer-tag{display:inline-flex; align-items:center; gap:7px; font-weight:600; font-size:13px}
 .recur-badge{font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--brand); background:rgba(124,92,255,.1); padding:2px 8px; border-radius:6px}
