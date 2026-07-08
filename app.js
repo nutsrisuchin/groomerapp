@@ -6,7 +6,7 @@
 
 /* ---------- constants ---------- */
 const SPECIES = { dog: "🐶", cat: "🐱" };
-const SERVICES = ["Shower", "Hair Clipping", "Hair Styling"];
+const SERVICES = ["Shower", "Hair Styling"];
 // Suggested breeds for the booking form's breed field (a <datalist>, so typing
 // anything else — mixed breeds, cats, less common breeds — still works fine).
 const BREEDS = [
@@ -22,7 +22,7 @@ const RECUR = {
   monthly: { label: "Every month",    rrule: "FREQ=MONTHLY" },
 };
 // Maps a booking service label to the key used in a pet profile's typical-time fields
-const SERVICE_TIME_KEY = { "Shower": "shower", "Hair Clipping": "clipping", "Hair Styling": "styling" };
+const SERVICE_TIME_KEY = { "Shower": "shower", "Hair Styling": "styling" };
 // Palette offered when creating/editing a groomer — the full set of Google Calendar
 // event colors (exact hexes), so a groomer's swatch here matches their events later.
 const GROOMER_COLORS = [
@@ -444,7 +444,6 @@ function viewPetDetail() {
         <h3 class="section-title">Typical time consumed</h3>
         <div class="time-pills">
           <span class="time-pill">🚿 Shower · ${t.shower ? t.shower + "h" : "—"}</span>
-          <span class="time-pill">✂️ Clipping · ${t.clipping ? t.clipping + "h" : "—"}</span>
           <span class="time-pill">💈 Styling · ${t.styling ? t.styling + "h" : "—"}</span>
         </div>
       </div>
@@ -985,9 +984,8 @@ function petEditorModal(pet) {
         ${state.groomers.map((g) => `<option value="${g.id}" ${p.groomerId === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}
       </select></div>
     <h3 class="section-title" style="margin-top:6px">Typical time consumed (hours)</h3>
-    <div class="field-row three">
+    <div class="field-row">
       <div class="field"><label>🚿 Shower</label><input id="f-shower" type="number" min="0" step="0.25" value="${esc(t.shower ?? "")}"></div>
-      <div class="field"><label>✂️ Clipping</label><input id="f-clipping" type="number" min="0" step="0.25" value="${esc(t.clipping ?? "")}"></div>
       <div class="field"><label>💈 Styling</label><input id="f-styling" type="number" min="0" step="0.25" value="${esc(t.styling ?? "")}"></div>
     </div>
     <div class="row spread" style="margin-top:12px">
@@ -1021,7 +1019,6 @@ function petEditorModal(pet) {
       groomerId: $("#f-groomer").value || null,
       times: {
         shower: numOrNull($("#f-shower").value),
-        clipping: numOrNull($("#f-clipping").value),
         styling: numOrNull($("#f-styling").value),
       },
       history: p.history || [],
