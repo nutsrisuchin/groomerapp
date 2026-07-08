@@ -68,19 +68,28 @@ any data regardless).
 
 ## What's inside
 - **Pets** — photo, name, dog/cat, breed, weight, assigned groomer, typical time for
-  shower / hair clipping / hair styling, and a running **service history**.
+  Basic / Hair Styling, a running **service history**, and (once weight is set) an
+  **estimated price** for each service based on the shop's weight-tier price sheet.
 - **Home** — search pets by **name and/or breed**, quick **New Booking**, a groomer overview,
   and a **Notifications** feed showing recent bookings and groomer changes (who did what,
   and when) — synced live, so everyone sees the same activity regardless of device.
 - **Bookings** — pick an existing pet (shows its photo, autofills breed/groomer/typical
   service times) or create a new pet profile right from the booking form. Each selected
-  service needs its hours entered (used as the Google Calendar event duration later).
-  Repeat **one-time / weekly / every 2 weeks / monthly**, with an optional **repeat-until**
-  end date. Each booking row has a 📋 button that copies a ready-to-send confirmation
-  message to the clipboard — `confirmed น้อง {name} {breed} {date & time}` — for pasting
-  straight to the customer (uses the upcoming date for recurring bookings).
+  service needs its hours entered (used as the Google Calendar event duration later), and
+  shows a live **estimated cost** based on the pet's weight tier. Repeat **one-time / weekly
+  / every 2 weeks / monthly**, with an optional **repeat-until** end date. Each booking row
+  has a 📋 button that copies a ready-to-send confirmation message to the clipboard —
+  `confirmed น้อง {name} {breed} {date & time}` — for pasting straight to the customer (uses
+  the upcoming date for recurring bookings), plus the estimated total if the pet's weight is known.
 - **Groomers** — add/remove groomers, each with a color (the full Google Calendar palette,
   11 colors including yellow). Seeded with **Mint, Mikka, Boat**.
+
+### Pricing (weight-tier based)
+Basic maps to the price sheet's "Basic" range (shown as a range since it depends on hair
+length, which isn't tracked); Hair Styling maps to "Full Groom" (a single fixed price per
+tier). The weight tiers and prices are hardcoded in `WEIGHT_TIERS` near the top of `app.js`
+— there's no in-app settings screen for this yet, so updating prices means editing that
+array directly and redeploying. Estimates only appear once a pet's weight is set.
 - **Admins** — add/remove people who can log into the app, each with their own name + PIN.
 - **Calendar** — connect a Google account and set the shared Calendar ID that bookings sync to.
 - **Schedule** — Day / Week / Month views, built entirely from the app's own booking data

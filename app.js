@@ -23,6 +23,35 @@ const RECUR = {
 };
 // Maps a booking service label to the key used in a pet profile's typical-time fields
 const SERVICE_TIME_KEY = { "Basic": "shower", "Hair Styling": "styling" };
+// Weight-tier pricing (THB) from the shop's price sheet. Basic is a range (the sheet notes
+// it depends on hair length, which isn't tracked yet, so we show the full range); Full
+// Groom (mapped to the app's "Hair Styling" service) is a single fixed price per tier.
+const WEIGHT_TIERS = [
+  { name: "Tiny",         maxKg: 2,  basic: [300, 350],   fullGroom: 600 },
+  { name: "Mini",         maxKg: 5,  basic: [400, 450],   fullGroom: 750 },
+  { name: "Small",        maxKg: 10, basic: [500, 550],   fullGroom: 900 },
+  { name: "Medium",       maxKg: 15, basic: [650, 700],   fullGroom: 1300 },
+  { name: "Large",        maxKg: 20, basic: [750, 850],   fullGroom: 1550 },
+  { name: "Extra-Large",  maxKg: 30, basic: [950, 1150],  fullGroom: 1800 },
+  { name: "Giant",        maxKg: 40, basic: [1200, 1500], fullGroom: 1900 },
+  { name: "Extra-Giant",  maxKg: 50, basic: [1500, 1600], fullGroom: 2500 },
+];
+function tierForWeight(kg) {
+  const n = Number(kg);
+  if (!kg || isNaN(n) || n <= 0) return null;
+  return WEIGHT_TIERS.find((t) => n <= t.maxKg) || WEIGHT_TIERS[WEIGHT_TIERS.length - 1];
+}
+// Estimated total for the given services at this pet's weight tier. Returns null if
+// weight is unknown or no priced service is selected.
+function estimateCost(weightKg, services) {
+  const tier = tierForWeight(weightKg);
+  if (!tier || !services || !services.length) return null;
+  let min = 0, max = 0, matched = false;
+  if (services.includes("Basic")) { min += tier.basic[0]; max += tier.basic[1]; matched = true; }
+  if (services.includes("Hair Styling")) { min += tier.fullGroom; max += tier.fullGroom; matched = true; }
+  if (!matched) return null;
+  return { tier: tier.name, min, max, label: min === max ? `฿${min}` : `฿${min}–${max}` };
+}
 // Palette offered when creating/editing a groomer — the full set of Google Calendar
 // event colors (exact hexes), so a groomer's swatch here matches their events later.
 const GROOMER_COLORS = [
@@ -437,6 +466,7 @@ function viewPetDetail() {
   const t = p.times || {};
   const history = [...(p.history || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
   const photo = p.photo ? `style="background-image:url('${p.photo}')"` : "";
+  const priceTier = tierForWeight(p.weight);
 
   return `
   <button class="btn ghost sm" data-nav="pets">← All pets</button>
@@ -461,6 +491,12 @@ function viewPetDetail() {
           <span class="time-pill">🚿 Basic · ${t.shower ? t.shower + "h" : "—"}</span>
           <span class="time-pill">💈 Styling · ${t.styling ? t.styling + "h" : "—"}</span>
         </div>
+        ${priceTier ? `
+          <h3 class="section-title" style="margin-top:14px">Estimated pricing (${priceTier.name}, ${esc(p.weight)}kg)</h3>
+          <div class="time-pills">
+            <span class="time-pill">🚿 Basic · ฿${priceTier.basic[0]}–${priceTier.basic[1]}</span>
+            <span class="time-pill">💈 Full Groom · ฿${priceTier.fullGroom}</span>
+          </div>` : ""}
       </div>
     </div>
   </div>
@@ -525,6 +561,8 @@ function bookingRow(b) {
     ? b.services.map((s) => `${esc(s)}${b.serviceHours && b.serviceHours[s] ? ` (${b.serviceHours[s]}h)` : ""}`).join(", ")
     : "";
   const total = bookingDurationHours(b);
+  const pet = b.petId ? state.pets.find((p) => p.id === b.petId) : null;
+  const cost = pet ? estimateCost(pet.weight, b.services) : null;
   return `
   <div class="booking">
     <div class="stripe" style="background:${groomerColor(b.groomerId)}"></div>
@@ -535,6 +573,7 @@ function bookingRow(b) {
         <span class="groomer-tag"><span class="dot" style="background:${groomerColor(b.groomerId)}"></span>${esc(groomerName(b.groomerId))}</span>
         ${svcText ? " · " + svcText : ""}
         ${total ? ` · ${total}h total` : ""}
+        ${cost ? ` · <strong>${cost.label}</strong>` : ""}
         ${b.recurrence && b.recurrence !== "none" ? ` <span class="recur-badge">${recur.label}${b.recurrenceUntil ? ` until ${fmtDate(b.recurrenceUntil)}` : ""}</span>` : ""}
       </div>
     </div>
@@ -1161,6 +1200,7 @@ function bookingModal(booking, prefillPet) {
           </div>`).join("")}
       </div>
       <div class="help" id="duration-total" style="margin-top:6px"></div>
+      <div class="help" id="cost-estimate" style="margin-top:2px; font-weight:600"></div>
     </div>
 
     <div class="field"><label>Notes</label><textarea id="b-notes" placeholder="Anything the groomer should know…">${esc(b.notes || "")}</textarea></div>
@@ -1187,7 +1227,7 @@ function bookingModal(booking, prefillPet) {
     else if (isNewPet) statusEl.innerHTML = `Creating a new pet profile · <button class="link" id="unmatch-pet" type="button">search instead</button>`;
     else statusEl.textContent = "Start typing to find an existing pet, or add a new one.";
     const um = $("#unmatch-pet");
-    if (um) um.onclick = () => { matchedPet = null; isNewPet = false; newPetBox.hidden = true; paintAvatar(); paintStatus(); petInput.focus(); };
+    if (um) um.onclick = () => { matchedPet = null; isNewPet = false; newPetBox.hidden = true; paintAvatar(); paintStatus(); petInput.focus(); updateCostEstimate(); };
   }
   function applyMatch(pet) {
     matchedPet = pet; isNewPet = false; newPetBox.hidden = true;
@@ -1201,7 +1241,7 @@ function bookingModal(booking, prefillPet) {
   function startNewPet() {
     matchedPet = null; isNewPet = true; newPetBox.hidden = false;
     suggestBox.hidden = true; suggestBox.innerHTML = "";
-    paintAvatar(); paintStatus();
+    paintAvatar(); paintStatus(); updateCostEstimate();
   }
   function renderSuggestions() {
     const q = petInput.value;
@@ -1236,6 +1276,16 @@ function bookingModal(booking, prefillPet) {
     let sum = 0;
     $$(".b-svc").forEach((cb) => { if (cb.checked) sum += Number($(`.b-hr[data-svc="${cb.dataset.svc}"]`).value) || 0; });
     $("#duration-total").textContent = sum ? `Total on calendar: ${Math.round(sum * 100) / 100} hr` : "Enter hours for each selected service.";
+    updateCostEstimate();
+  }
+  function updateCostEstimate() {
+    const el = $("#cost-estimate");
+    if (!el) return;
+    const weight = matchedPet ? matchedPet.weight : (isNewPet ? $("#np-weight").value : null);
+    const services = $$(".b-svc").filter((cb) => cb.checked).map((cb) => cb.dataset.svc);
+    if (!services.length) { el.textContent = ""; return; }
+    const est = estimateCost(weight, services);
+    el.textContent = est ? `Estimated cost: ${est.label} (${est.tier})` : "Add the pet's weight to estimate cost.";
   }
 
   petInput.addEventListener("input", () => {
@@ -1262,6 +1312,7 @@ function bookingModal(booking, prefillPet) {
     newPetPhoto = await fileToResizedDataURL(file);
     paintAvatar();
   };
+  $("#np-weight").addEventListener("input", updateCostEstimate);
 
   paintAvatar(); paintStatus();
   if (matchedPet) prefillHoursFromPet(); else updateTotal();
