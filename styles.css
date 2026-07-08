@@ -184,6 +184,11 @@ input,select,textarea{font-family:inherit; font-size:14px}
 .booking .who .pet{font-weight:700}
 .booking .who .sub{font-size:13px; color:var(--ink-soft)}
 
+/* ---------- Notifications (activity feed on Home) ---------- */
+.activity-row{display:flex; gap:10px; align-items:flex-start; padding:8px 0; border-bottom:1px solid var(--line)}
+.activity-row:last-child{border-bottom:0}
+.activity-icon{font-size:15px; flex:none; width:22px; text-align:center; line-height:1.4}
+
 /* ---------- Schedule (day timeline per groomer) ---------- */
 .schedule-grid{display:flex; align-items:stretch}
 .schedule-axis{width:56px; flex:none; position:relative}

@@ -69,7 +69,9 @@ any data regardless).
 ## What's inside
 - **Pets** — photo, name, dog/cat, breed, weight, assigned groomer, typical time for
   shower / hair clipping / hair styling, and a running **service history**.
-- **Home** — search pets by **name and/or breed**, quick **New Booking**, and a groomer overview.
+- **Home** — search pets by **name and/or breed**, quick **New Booking**, a groomer overview,
+  and a **Notifications** feed showing recent bookings and groomer changes (who did what,
+  and when) — synced live, so everyone sees the same activity regardless of device.
 - **Bookings** — pick an existing pet (shows its photo, autofills breed/groomer/typical
   service times) or create a new pet profile right from the booking form. Each selected
   service needs its hours entered (used as the Google Calendar event duration later).

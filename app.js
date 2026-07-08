@@ -316,6 +316,7 @@ function viewHome() {
   const results = filteredPets();
   const searching = state.search.name || state.search.breed;
   const upcoming = upcomingBookings(6);
+  const recent = [...state.activity].sort((a, b) => b.at - a.at).slice(0, 8);
 
   return `
   <div class="page-head">
@@ -347,6 +348,12 @@ function viewHome() {
     </div>
 
     <div class="stack" style="gap:16px">
+      <div class="card pad">
+        <h3 class="section-title">Notifications</h3>
+        <div class="stack" style="gap:2px">
+          ${recent.length ? recent.map(activityRow).join("") : emptyInline("No recent activity yet.")}
+        </div>
+      </div>
       <div class="card pad">
         <h3 class="section-title">Quick actions</h3>
         <div class="stack" style="gap:10px">
@@ -468,6 +475,18 @@ function viewBookings() {
   </div>
   ${list.length ? `<div class="card">${list.map(bookingRow).join("")}</div>`
     : emptyBlock("📅", "No bookings yet", "Create a booking — it's ready to sync to Google Calendar later.", "new-booking", "New booking")}`;
+}
+
+function activityRow(a) {
+  const icon = (ACTIVITY_ICON[a.type] && ACTIVITY_ICON[a.type][a.action]) || "•";
+  return `
+  <div class="activity-row">
+    <span class="activity-icon">${icon}</span>
+    <div class="grow">
+      <div style="font-size:13px">${esc(a.summary)}</div>
+      <div class="faint" style="font-size:12px">${esc(a.actorName || "Someone")} · ${timeAgo(a.at)}</div>
+    </div>
+  </div>`;
 }
 
 function bookingRow(b) {
@@ -1143,6 +1162,8 @@ function bookingModal(booking, prefillPet) {
     closeModal(); toast(booking ? "Booking updated" : "Booking created"); render();
     syncBookingToCalendar(rec);
     rememberBreed(rec.breed);
+    logActivity("booking", booking ? "updated" : "created",
+      `${rec.petName}${rec.breed ? ` (${rec.breed})` : ""} with ${groomerName(rec.groomerId)} — ${fmtDate(rec.start)} ${fmtTime(rec.start)}`);
   };
 }
 // Best-effort: a Calendar failure here never undoes or blocks the booking save above.
@@ -1196,6 +1217,7 @@ function groomerModal(groomer) {
     await DB.put("groomers", rec);
     upsertLocal("groomers", rec);
     closeModal(); toast(groomer ? "Groomer updated" : "Groomer added"); render();
+    logActivity("groomer", groomer ? "updated" : "created", rec.name);
   };
 }
 
@@ -1295,14 +1317,19 @@ async function handleAction(action, data) {
         if (deleted && deleted.calendarEventId && calendarId && GCal.isConnected()) {
           GCal.deleteBooking(calendarId, deleted.calendarEventId).catch((err) => console.error("Calendar delete failed", err));
         }
+        if (deleted) logActivity("booking", "deleted", `${deleted.petName}${deleted.breed ? ` (${deleted.breed})` : ""} with ${groomerName(deleted.groomerId)}`);
       }
       break;
     case "new-groomer": groomerModal(null); break;
     case "edit-groomer": groomerModal(state.groomers.find((g) => g.id === data.id)); break;
     case "del-groomer": {
+      const removed = state.groomers.find((g) => g.id === data.id);
       const count = state.bookings.filter((b) => b.groomerId === data.id).length;
       const msg = count ? `This groomer has ${count} booking(s). Remove anyway? Bookings stay but show as unassigned.` : "Remove this groomer?";
-      if (confirm(msg)) { await DB.del("groomers", data.id); removeLocal("groomers", data.id); toast("Groomer removed"); render(); }
+      if (confirm(msg)) {
+        await DB.del("groomers", data.id); removeLocal("groomers", data.id); toast("Groomer removed"); render();
+        if (removed) logActivity("groomer", "deleted", removed.name);
+      }
     } break;
     case "new-admin": adminModal(); break;
     case "del-admin":
