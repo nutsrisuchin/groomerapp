@@ -612,6 +612,7 @@ $("#gcal-banner-dismiss").addEventListener("click", () => { gcalBannerDismissed 
 function viewCalendarSettings() {
   const calendarId = getCalendarId();
   const connected = GCal.isConnected();
+  const pendingCount = state.bookings.filter((b) => b.calendarDirty || !b.calendarEventId).length + state.calendarTombstones.length;
   return `
   <div class="page-head"><h1>Google Calendar</h1></div>
   <div class="card pad">
@@ -624,6 +625,11 @@ function viewCalendarSettings() {
       </div>
       <button class="btn ${connected ? "" : "primary"}" data-action="gcal-connect">${connected ? "Reconnect" : "Connect Google Calendar"}</button>
     </div>
+    ${pendingCount > 0 ? `
+      <div class="row spread" style="background:var(--surface-2); border-radius:12px; padding:10px 14px; margin-bottom:14px">
+        <span style="font-size:13px">${pendingCount} booking${pendingCount === 1 ? "" : "s"} not yet synced to Calendar</span>
+        <button class="btn sm" data-action="gcal-sync-now" ${connected ? "" : "disabled"}>Sync now</button>
+      </div>` : ""}
     <div class="divider"></div>
     <div class="field"><label>Shared Calendar ID</label>
       <input id="gcal-id" value="${esc(calendarId)}" placeholder="e.g. abc123@group.calendar.google.com">
@@ -1310,8 +1316,10 @@ function bookingModal(booking, prefillPet) {
    a change made on an unconnected device still reaches Calendar as soon as any other
    connected device (or that same device, once reconnected) sees it. */
 let reconciling = false;
+let reconcilePending = false; // set when a trigger arrives while a pass is already running
 async function reconcileCalendar() {
-  if (reconciling || !GCal.isConnected()) return;
+  if (reconciling) { reconcilePending = true; return; } // don't drop it — a follow-up pass will pick it up
+  if (!GCal.isConnected()) return;
   const calendarId = getCalendarId();
   if (!calendarId) return;
   reconciling = true;
@@ -1335,6 +1343,7 @@ async function reconcileCalendar() {
     }
   } finally {
     reconciling = false;
+    if (reconcilePending) { reconcilePending = false; reconcileCalendar(); }
   }
 }
 function toLocalInput(d) {
@@ -1518,6 +1527,12 @@ async function handleAction(action, data) {
       const rec = { id: "calendar", calendarId: id, updatedAt: Date.now() };
       await DB.put("settings", rec); upsertLocal("settings", rec); toast("Calendar ID saved"); render();
     } break;
+    case "gcal-sync-now":
+      toast("Syncing…");
+      await reconcileCalendar();
+      toast("Sync complete");
+      render();
+      break;
     case "sched-prev": {
       const cur = state.scheduleDate || todayKey(), m = state.scheduleMode;
       state.scheduleDate = m === "week" ? addDaysKey(cur, -7) : m === "month" ? addMonthsKey(cur, -1) : addDaysKey(cur, -1);
