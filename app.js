@@ -1242,6 +1242,9 @@ $("#login-form").addEventListener("submit", async (e) => {
 
 $("#logout-btn").addEventListener("click", () => DB.logout());
 
+// Keeps the Calendar tab's Connected/Not connected badge live across silent background renewals.
+GCal.onStatusChange(() => { if (state.view === "calendar") render(); });
+
 DB.onAuthChange(async (user) => {
   if (!user) {
     stopWatchers();

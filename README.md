@@ -126,9 +126,14 @@ matching Calendar event (title = `Name Breed Service`, color = the groomer's, du
 of that booking's service hours, recurrence = the chosen repeat rule + until date); deleting
 a booking removes its event.
 
-The connection lasts about an hour (browser memory only, nothing persisted) — reconnect
-anytime from the Calendar tab. If it's not connected, bookings still save normally; Calendar
-sync is always best-effort and never blocks or undoes a save.
+Each token only lasts about an hour, but once connected the app silently renews it in the
+background (no popup, no click) for as long as that browser tab stays open and you remain
+logged into Google — so in practice it stays connected all day. It only drops back to "Not
+connected" if you close the browser, log out of Google, or revoke access; reconnect anytime
+from the Calendar tab. (Nothing about the connection is ever written to Firestore — this is
+browser memory only, deliberately, since a true always-on connection that survives restarts
+would need a small backend to hold a real refresh token.) If it's not connected, bookings
+still save normally; Calendar sync is always best-effort and never blocks or undoes a save.
 
 ### Switching from the demo calendar to the real one
 Once testing looks good: share the shop's real Google Calendar with whichever account(s)

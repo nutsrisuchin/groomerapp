@@ -2,17 +2,25 @@
    calendar.js — Google Calendar sync for Pawfect Grooming Studio.
 
    Uses Google Identity Services (GIS) for a client-side-only OAuth2
-   token (no backend needed). The token lives ~1 hour and only in
-   memory — whoever's using the app just clicks "Connect Google
-   Calendar" again if it expires. Booking sync is always best-effort:
-   a Firestore write always succeeds/fails on its own; the Calendar
-   call happens after, and failures there never block or undo it.
+   token (no backend needed). The token lives ~1 hour; once connected,
+   this module auto-renews it silently (no popup) about 5 minutes
+   before it expires, so it stays connected for as long as the browser
+   tab stays open and the Google session is still active — no repeated
+   manual clicks. If the silent renewal ever fails (Google session
+   logged out, consent revoked, etc.), it falls back to "not connected"
+   and a manual Connect click is needed. Booking sync is always
+   best-effort: a Firestore write always succeeds/fails on its own; the
+   Calendar call happens after, and failures there never block or undo it.
 
    Exposes a small promise-based API on window.GCal.
 =================================================================== */
 (function () {
   let accessToken = null;
   let tokenExpiry = 0;
+  let tokenClient = null;
+  let refreshTimer = null;
+  let pending = null; // { resolve, reject } for an in-flight explicit connect()
+  let statusListener = null;
 
   function whenGisReady() {
     return new Promise((resolve) => {
@@ -23,38 +31,69 @@
     });
   }
 
+  function scheduleSilentRefresh(expiresInSec) {
+    clearTimeout(refreshTimer);
+    const delayMs = Math.max(expiresInSec - 300, 10) * 1000; // renew 5 min before expiry
+    refreshTimer = setTimeout(() => { if (tokenClient) tokenClient.requestAccessToken({ prompt: "" }); }, delayMs);
+  }
+
+  function handleTokenResponse(resp) {
+    if (resp.error) {
+      accessToken = null; tokenExpiry = 0;
+      if (pending) { pending.reject(new Error(resp.error)); pending = null; }
+      if (statusListener) statusListener(false);
+      return;
+    }
+    accessToken = resp.access_token;
+    const expiresIn = Number(resp.expires_in) || 3500;
+    tokenExpiry = Date.now() + expiresIn * 1000;
+    scheduleSilentRefresh(expiresIn);
+    if (pending) { pending.resolve(); pending = null; }
+    if (statusListener) statusListener(true);
+  }
+
+  async function ensureTokenClient() {
+    if (tokenClient) return;
+    await whenGisReady();
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: "https://www.googleapis.com/auth/calendar.events",
+      callback: handleTokenResponse,
+    });
+  }
+
   const api = {};
 
   api.isConnected = () => !!accessToken && Date.now() < tokenExpiry;
-  api.disconnect = () => { accessToken = null; tokenExpiry = 0; };
+  api.disconnect = () => { accessToken = null; tokenExpiry = 0; clearTimeout(refreshTimer); };
+  // Notified on every silent renewal success/failure too, so the UI can react without a click.
+  api.onStatusChange = (fn) => { statusListener = fn; };
 
-  // Must be called from directly inside a user click handler (popup permission).
+  // Must be called from directly inside a user click handler the first time (popup permission).
   api.connect = async function () {
-    await whenGisReady();
+    await ensureTokenClient();
     return new Promise((resolve, reject) => {
-      const tokenClient = google.accounts.oauth2.initTokenClient({
-        client_id: GOOGLE_CLIENT_ID,
-        scope: "https://www.googleapis.com/auth/calendar.events",
-        callback: (resp) => {
-          if (resp.error) { reject(new Error(resp.error)); return; }
-          accessToken = resp.access_token;
-          tokenExpiry = Date.now() + (Number(resp.expires_in) || 3500) * 1000;
-          resolve();
-        },
-      });
+      pending = { resolve, reject };
       tokenClient.requestAccessToken({ prompt: "" });
     });
   };
 
-  async function call(method, calendarId, path, body) {
-    if (!api.isConnected()) throw new Error("not-connected");
+  async function call(method, calendarId, path, body, retried) {
+    if (!api.isConnected()) {
+      if (retried) throw new Error("not-connected");
+      try { await api.connect(); } catch (err) { throw new Error("not-connected"); }
+    }
     const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events${path}`;
     const res = await fetch(url, {
       method,
       headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
       body: body ? JSON.stringify(body) : undefined,
     });
-    if (res.status === 401) { accessToken = null; throw new Error("token-expired"); }
+    if (res.status === 401) {
+      accessToken = null;
+      if (!retried) { try { return await call(method, calendarId, path, body, true); } catch (err) { /* fall through */ } }
+      throw new Error("token-expired");
+    }
     if (!res.ok) throw new Error(`calendar-api-${res.status}`);
     return res.status === 204 ? null : res.json();
   }
