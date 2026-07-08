@@ -114,10 +114,14 @@
     const hours = Object.values(booking.serviceHours || {}).reduce((a, v) => a + (Number(v) || 0), 0) || 1;
     const end = new Date(new Date(booking.start).getTime() + hours * 3600 * 1000).toISOString();
     const parts = [booking.petName, booking.breed, (booking.services || []).join(", ")].filter(Boolean);
+    // Google rejects the request outright ("Missing time zone definition") if it can't be
+    // certain the dateTime is unambiguous — always pin an explicit IANA zone as a safety
+    // net, even though booking.start should normally already carry a "Z"/UTC offset.
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const event = {
       summary: parts.join(" "),
-      start: { dateTime: booking.start },
-      end: { dateTime: end },
+      start: { dateTime: booking.start, timeZone },
+      end: { dateTime: end, timeZone },
     };
     if (groomer && groomer.calendarColorId) event.colorId = groomer.calendarColorId;
     if (booking.recurrence && booking.recurrence !== "none" && RRULE_BASE[booking.recurrence]) {
