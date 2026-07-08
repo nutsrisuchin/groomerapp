@@ -1572,27 +1572,9 @@ $("#login-form").addEventListener("submit", async (e) => {
 
 $("#logout-btn").addEventListener("click", () => DB.logout());
 
-// Google Calendar can be connected right from the login screen — independent of the app's
-// own PIN login (it's a separate Google OAuth flow), so it works even before signing in.
-function updateLoginGcalStatus() {
-  const btn = $("#login-gcal-btn"), status = $("#login-gcal-status");
-  if (!btn || !status) return;
-  if (GCal.isConnected()) { status.textContent = "🟢 Connected"; btn.textContent = "Reconnect Google Calendar"; }
-  else { status.textContent = ""; btn.textContent = "📅 Connect Google Calendar"; }
-}
-$("#login-gcal-btn").addEventListener("click", async () => {
-  const btn = $("#login-gcal-btn");
-  btn.disabled = true; btn.textContent = "Connecting…";
-  try { await GCal.connect(); toast("Connected to Google Calendar"); }
-  catch (err) { $("#login-gcal-status").textContent = "Couldn't connect — check your pop-up blocker and try again."; }
-  finally { btn.disabled = false; updateLoginGcalStatus(); }
-});
-updateLoginGcalStatus();
-
-// Keeps the Calendar tab's badge, the login screen's status, and the banner live across renewals.
+// Keeps the Calendar tab's badge and the banner live across renewals.
 GCal.onStatusChange((connected) => {
   if (state.view === "calendar") render();
-  updateLoginGcalStatus();
   updateGcalBanner();
   if (connected) reconcileCalendar(); // catch up on anything that piled up while disconnected
 });
@@ -1604,7 +1586,6 @@ DB.onAuthChange(async (user) => {
     $("#login-gate").hidden = false;
     $("#login-pin").value = "";
     $("#login-name").focus();
-    updateLoginGcalStatus();
     return;
   }
   try {

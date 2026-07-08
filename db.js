@@ -35,6 +35,13 @@
   const auth = firebase.auth();
   const store = firebase.firestore();
 
+  // No session persistence, by design: every fresh page load (refresh, reopened tab,
+  // reopened browser) should require typing the name + PIN again, rather than silently
+  // resuming a previous login. Also sidesteps the race where auto-resumed sessions
+  // could reach app logic before Firestore had delivered the data it depends on.
+  auth.setPersistence(firebase.auth.Auth.Persistence.NONE)
+    .catch((err) => console.error("Failed to set auth persistence", err));
+
   const cache = { pets: [], groomers: [], bookings: [], admins: [] };
   const col = (name) => store.collection(name);
 
