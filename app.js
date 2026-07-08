@@ -987,6 +987,10 @@ function petEditorModal(pet) {
     go("pet", rec.id);
     rememberBreed(rec.breed);
   };
+  // Buttons inside a modal aren't covered by the generic [data-action] delegation (that
+  // only runs on the main page render), so this needs its own explicit handler.
+  const delBtn = $('[data-action="del-pet"]');
+  if (delBtn) delBtn.onclick = () => handleAction("del-pet", { id: p.id });
 }
 const numOrNull = (v) => (v === "" || v == null ? null : Number(v));
 
