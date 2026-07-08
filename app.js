@@ -87,7 +87,7 @@ const GROOMER_COLORS = [
 ];
 
 /* ---------- state ---------- */
-const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], scheduleDate: "", scheduleHiddenGroomers: [], search: { name: "", breed: "" } };
+const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], scheduleDate: "", scheduleHiddenGroomers: [], financialMonth: "", search: { name: "", breed: "" } };
 const getCalendarId = () => (state.settings.find((s) => s.id === "calendar") || {}).calendarId || "";
 const getCustomBreeds = () => (state.settings.find((s) => s.id === "breeds") || {}).list || [];
 // Static per-species list plus any breed staff have typed in before (shared across
@@ -255,6 +255,7 @@ function freeSlots(busy, openMin, closeMin) {
 // All bookings (any groomer) occurring on `dateStr`, each with its occurrence time and duration.
 function bookingsOnDate(dateStr) {
   return state.bookings
+    .filter((b) => b.status !== "cancelled")
     .map((b) => {
       const occ = occurrenceOnDate(b, dateStr);
       if (!occ) return null;
@@ -286,6 +287,16 @@ function nextOccurrence(b) {
   }
   return d;
 }
+// True once a pending (unresolved) booking's date has fully passed — a one-time booking
+// whose day is behind us, or a recurring series that has ended (recurrenceUntil passed) —
+// and it still needs someone to confirm it as Completed or Cancelled.
+function isPastDue(b) {
+  if (b.status && b.status !== "pending") return false;
+  const occ = nextOccurrence(b);
+  if (occ === null) return true; // series ended, never resolved
+  if ((!b.recurrence || b.recurrence === "none") && occ < startOfToday()) return true;
+  return false;
+}
 function bookingDurationHours(b) {
   if (!b.serviceHours) return 0;
   const sum = Object.values(b.serviceHours).reduce((a, v) => a + (Number(v) || 0), 0);
@@ -295,7 +306,7 @@ function bookingDurationHours(b) {
 /* ---------- lookups ---------- */
 const groomerById = (id) => state.groomers.find((g) => g.id === id);
 function groomerColor(id) { const g = groomerById(id); return g ? g.color : "#c3c8d4"; }
-function groomerName(id) { const g = groomerById(id); return g ? g.name : "Unassigned"; }
+function groomerName(id) { const g = groomerById(id); return g ? g.name : "No preference"; }
 function findMatchingPets(query, limit = 6) {
   const q = query.trim().toLowerCase();
   if (!q) return [];
@@ -382,6 +393,7 @@ function render() {
   else if (state.view === "admins") v.innerHTML = viewAdmins();
   else if (state.view === "calendar") v.innerHTML = viewCalendarSettings();
   else if (state.view === "schedule") v.innerHTML = viewSchedule();
+  else if (state.view === "financial") v.innerHTML = viewFinancial();
   bindView();
   window.scrollTo({ top: 0 });
 }
@@ -544,20 +556,45 @@ function viewPetDetail() {
 
 /* ---------- BOOKINGS ---------- */
 function viewBookings() {
-  const list = [...state.bookings].sort((a, b) => {
+  const byOccurrence = (a, b) => {
     const wa = nextOccurrence(a), wb = nextOccurrence(b);
     if (wa === null && wb === null) return new Date(b.start) - new Date(a.start);
     if (wa === null) return 1;
     if (wb === null) return -1;
     return wa - wb;
-  });
+  };
+  const pending = state.bookings.filter((b) => !b.status || b.status === "pending");
+  const pastDue = pending.filter(isPastDue).sort(byOccurrence);
+  const upcoming = pending.filter((b) => !isPastDue(b)).sort(byOccurrence);
+  const completed = state.bookings.filter((b) => b.status === "completed").sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0));
+  const cancelled = state.bookings.filter((b) => b.status === "cancelled").sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0));
+
   return `
   <div class="page-head">
-    <h1>Bookings <span class="faint" style="font-weight:600">(${list.length})</span></h1>
+    <h1>Bookings <span class="faint" style="font-weight:600">(${state.bookings.length})</span></h1>
     <button class="btn primary" data-action="new-booking">＋ New booking</button>
   </div>
-  ${list.length ? `<div class="card">${list.map(bookingRow).join("")}</div>`
-    : emptyBlock("📅", "No bookings yet", "Create a booking — it's ready to sync to Google Calendar later.", "new-booking", "New booking")}`;
+
+  ${pastDue.length ? `
+    <div class="card pastdue-card" style="margin-bottom:16px">
+      <div class="card pad" style="padding-bottom:0; border:0"><h3 class="section-title pastdue-title">⏰ Past bookings — needs confirmation (${pastDue.length})</h3></div>
+      ${pastDue.map((b) => bookingRow(b, { showResolveActions: true })).join("")}
+    </div>` : ""}
+
+  ${upcoming.length ? `<div class="card">${upcoming.map((b) => bookingRow(b)).join("")}</div>`
+    : (pastDue.length ? "" : emptyBlock("📅", "No bookings yet", "Create a booking — it's ready to sync to Google Calendar later.", "new-booking", "New booking"))}
+
+  ${completed.length ? `
+    <details class="card bookings-collapsible" style="margin-top:16px">
+      <summary>Completed Bookings (${completed.length})</summary>
+      ${completed.map((b) => bookingRow(b)).join("")}
+    </details>` : ""}
+
+  ${cancelled.length ? `
+    <details class="card bookings-collapsible" style="margin-top:16px">
+      <summary>Cancelled Bookings (${cancelled.length})</summary>
+      ${cancelled.map((b) => bookingRow(b)).join("")}
+    </details>` : ""}`;
 }
 
 function activityRow(a) {
@@ -572,7 +609,7 @@ function activityRow(a) {
   </div>`;
 }
 
-function bookingRow(b) {
+function bookingRow(b, opts = {}) {
   const when = nextOccurrence(b);
   const ended = when === null;
   const shown = when || new Date(b.start);
@@ -582,22 +619,28 @@ function bookingRow(b) {
     : "";
   const total = bookingDurationHours(b);
   const pet = b.petId ? state.pets.find((p) => p.id === b.petId) : null;
-  const cost = pet ? estimateCost(pet.weight, b.services, pet.species) : null;
+  const estCost = pet ? estimateCost(pet.weight, b.services, pet.species) : null;
+  const costLabel = (b.totalCost != null && b.totalCost !== "") ? `฿${Number(b.totalCost).toLocaleString()}` : (estCost ? estCost.label : null);
+  const statusBadge = b.status === "completed" ? ` <span class="status-badge status-completed">✓ Completed</span>`
+    : b.status === "cancelled" ? ` <span class="status-badge status-cancelled">✕ Cancelled</span>` : "";
   return `
   <div class="booking">
     <div class="stripe" style="background:${groomerColor(b.groomerId)}"></div>
     <div class="when"><div class="date">${fmtDate(shown)}</div><div class="time">${ended ? "Series ended" : fmtTime(shown)}</div></div>
     <div class="who">
-      <div class="pet">${esc(b.petName)}${b.breed ? ` · <span class="muted" style="font-weight:500">${esc(b.breed)}</span>` : ""}</div>
+      <div class="pet">${esc(b.petName)}${b.breed ? ` · <span class="muted" style="font-weight:500">${esc(b.breed)}</span>` : ""}${statusBadge}</div>
       <div class="sub">
         <span class="groomer-tag"><span class="dot" style="background:${groomerColor(b.groomerId)}"></span>${esc(groomerName(b.groomerId))}</span>
         ${svcText ? " · " + svcText : ""}
         ${total ? ` · ${total}h total` : ""}
-        ${cost ? ` · <strong>${cost.label}</strong>` : ""}
+        ${costLabel ? ` · <strong>${costLabel}</strong>` : ""}
         ${b.recurrence && b.recurrence !== "none" ? ` <span class="recur-badge">${recur.label}${b.recurrenceUntil ? ` until ${fmtDate(b.recurrenceUntil)}` : ""}</span>` : ""}
       </div>
     </div>
     <div class="booking-actions">
+      ${opts.showResolveActions ? `
+        <button class="btn sm" data-action="complete-booking" data-id="${b.id}">✓ Complete</button>
+        <button class="btn sm danger" data-action="cancel-booking" data-id="${b.id}">✕ Cancel</button>` : ""}
       <button class="btn sm" data-action="edit-booking" data-id="${b.id}">Edit</button>
       <button class="icon-btn" data-action="copy-confirm" data-id="${b.id}" title="Copy confirmation message">📋</button>
       <button class="icon-btn" data-action="del-booking" data-id="${b.id}" title="Delete">🗑</button>
@@ -796,6 +839,77 @@ function viewSchedule() {
   </div>`;
 }
 
+function fmtMonthOnly(monthKey) { return new Date(monthKey + "-01T00:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }); }
+function addMonthsToMonthKey(monthKey, n) { return addMonthsKey(monthKey + "-01", n).slice(0, 7); }
+function monthKeyOf(ms) { return dateKey(new Date(ms)).slice(0, 7); }
+
+// Revenue for a completed/cancelled-irrelevant booking: the staff-entered total if set,
+// otherwise the midpoint of the weight-tier estimate (matches what the booking form shows).
+function bookingRevenue(b) {
+  if (b.totalCost != null && b.totalCost !== "") return Number(b.totalCost);
+  const pet = b.petId ? state.pets.find((p) => p.id === b.petId) : null;
+  const est = pet ? estimateCost(pet.weight, b.services, pet.species) : null;
+  return est ? Math.round((est.min + est.max) / 2) : 0;
+}
+
+function viewFinancial() {
+  if (!state.financialMonth) state.financialMonth = todayKey().slice(0, 7);
+  const monthKey = state.financialMonth;
+  // Grouped by when a booking was marked complete (completedAt), not its scheduled date —
+  // a recurring booking's original date can be far in the past by the time it's resolved.
+  const completed = state.bookings.filter((b) => b.status === "completed" && b.completedAt && monthKeyOf(b.completedAt) === monthKey);
+  const totalRevenue = completed.reduce((sum, b) => sum + bookingRevenue(b), 0);
+
+  const byGroomer = {};
+  completed.forEach((b) => {
+    const key = b.groomerId || "none";
+    if (!byGroomer[key]) byGroomer[key] = { count: 0, revenue: 0 };
+    byGroomer[key].count++;
+    byGroomer[key].revenue += bookingRevenue(b);
+  });
+  const groomerRows = Object.entries(byGroomer)
+    .sort((a, b) => b[1].revenue - a[1].revenue)
+    .map(([gid, stats]) => {
+      const name = gid === "none" ? "No preference" : groomerName(gid);
+      const color = gid === "none" ? "#9aa3b2" : groomerColor(gid);
+      return `
+      <div class="fin-groomer-row">
+        <span class="groomer-tag"><span class="dot" style="background:${color}"></span>${esc(name)}</span>
+        <span class="faint">${stats.count} booking${stats.count === 1 ? "" : "s"}</span>
+        <strong>฿${stats.revenue.toLocaleString()}</strong>
+      </div>`;
+    }).join("");
+
+  const toolbar = `
+  <div class="card pad fin-toolbar">
+    <div class="row">
+      <button class="btn sm" data-action="fin-today">This month</button>
+      <button class="icon-btn" data-action="fin-prev" aria-label="Previous month">‹</button>
+      <button class="icon-btn" data-action="fin-next" aria-label="Next month">›</button>
+      <div class="gcal-title">${fmtMonthOnly(monthKey)}</div>
+    </div>
+    <input type="month" id="fin-month-picker" value="${monthKey}">
+  </div>`;
+
+  return `
+  <div class="page-head"><h1>Financial</h1></div>
+  ${toolbar}
+  <div class="fin-stats">
+    <div class="card pad fin-stat">
+      <div class="section-title">Revenue</div>
+      <div class="fin-stat-value">฿${totalRevenue.toLocaleString()}</div>
+    </div>
+    <div class="card pad fin-stat">
+      <div class="section-title">Customers served</div>
+      <div class="fin-stat-value">${completed.length}</div>
+    </div>
+  </div>
+  <div class="card pad" style="margin-top:16px">
+    <div class="section-title">By groomer</div>
+    ${groomerRows || emptyInline("No completed bookings this month yet.")}
+  </div>`;
+}
+
 // Splits genuinely time-overlapping items into side-by-side lanes within the same column
 // so one booking never fully hides another; non-overlapping items keep the full width.
 function layoutLanes(items) {
@@ -849,6 +963,13 @@ function scheduleBodyDay(dateStr) {
     const items = all.filter((it) => it.booking.groomerId === g.id);
     return { groomer: g, items: layoutLanes(items), free: freeSlots(items, openMin, closeMin) };
   });
+  // "No preference" bookings don't belong to any real groomer's column — give them their
+  // own in the grid (but not the Open Slots summary below, which only makes sense per
+  // actual person), only when there's actually one to show, so it doesn't clutter every day.
+  const unassignedItems = all.filter((it) => !it.booking.groomerId);
+  const gridColumns = unassignedItems.length
+    ? [...columns, { groomer: { name: "No preference", color: "#9aa3b2" }, items: layoutLanes(unassignedItems) }]
+    : columns;
   const gridHeight = ((closeMin - openMin) / 60) * PX_PER_HOUR;
   const now = nowMinutesToday();
   const nowLine = (now.dateStr === dateStr && now.min >= openMin && now.min <= closeMin)
@@ -860,7 +981,7 @@ function scheduleBodyDay(dateStr) {
       <div class="schedule-axis">
         ${hourMarks.map((m) => `<div class="axis-mark" style="top:${((m - openMin) / 60) * PX_PER_HOUR}px">${fmtMinutes(m)}</div>`).join("")}
       </div>
-      ${columns.map((col) => `
+      ${gridColumns.map((col) => `
         <div class="schedule-col">
           <div class="schedule-col-head"><span class="dot" style="background:${col.groomer.color}"></span>${esc(col.groomer.name)}</div>
           <div class="schedule-col-body" style="height:${gridHeight}px">
@@ -1011,6 +1132,7 @@ function filteredPets() {
 function upcomingBookings(limit) {
   const today = startOfToday();
   return state.bookings
+    .filter((b) => !b.status || b.status === "pending")
     .map((b) => ({ b, when: nextOccurrence(b) }))
     .filter((x) => x.when && x.when >= today)
     .sort((a, b) => a.when - b.when)
@@ -1161,10 +1283,13 @@ function bookingModal(booking, prefillPet) {
   let isNewPet = false;
   let newPetPhoto = null;
   const touchedHours = {}; // service label -> true once the user has hand-edited its hour field
+  let costTouched = !!(b.totalCost != null && b.totalCost !== ""); // don't clobber a saved/edited cost
 
   const initialName = b.petName || (matchedPet ? matchedPet.name : "");
   const initialBreed = b.breed || (matchedPet ? matchedPet.breed : "");
-  const initialGroomer = b.groomerId || (matchedPet ? matchedPet.groomerId : "") || "";
+  // Editing an existing booking: preserve an explicit "no preference" (null) rather than
+  // silently substituting the pet's usual groomer. New booking: prefill from the pet as before.
+  const initialGroomer = booking ? (b.groomerId ?? "none") : (b.groomerId || (matchedPet ? matchedPet.groomerId : "") || "");
   const initialWeight = matchedPet ? (matchedPet.weight || "") : "";
   const initialSpecies = matchedPet ? (matchedPet.species || "dog") : "dog";
   const initialServices = b.services || [];
@@ -1203,8 +1328,11 @@ function bookingModal(booking, prefillPet) {
     </div>
     <div class="field-row">
       <div class="field"><label>Groomer</label>
-        <select id="b-groomer"><option value="">— Choose —</option>
-          ${state.groomers.map((g) => `<option value="${g.id}" ${initialGroomer === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select></div>
+        <select id="b-groomer">
+          <option value="">— Choose —</option>
+          <option value="none" ${initialGroomer === "none" ? "selected" : ""}>No preference</option>
+          ${state.groomers.map((g) => `<option value="${g.id}" ${initialGroomer === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}
+        </select></div>
       <div class="field"><label>Weight (kg)</label>
         <input id="b-weight" type="number" step="0.1" placeholder="8.5" value="${esc(initialWeight)}">
       </div>
@@ -1232,7 +1360,12 @@ function bookingModal(booking, prefillPet) {
           </label>`).join("")}
       </div>
       <div class="help" id="duration-total" style="margin-top:6px"></div>
-      <div class="help" id="cost-estimate" style="margin-top:2px; font-weight:600"></div>
+    </div>
+
+    <div class="field">
+      <label>Total cost (฿)</label>
+      <input id="b-cost" type="number" min="0" step="1" placeholder="0" value="${esc(b.totalCost ?? "")}">
+      <div class="help" id="cost-estimate" style="margin-top:4px"></div>
     </div>
 
     <div class="field"><label>Notes</label><textarea id="b-notes" placeholder="Anything the groomer should know…">${esc(b.notes || "")}</textarea></div>
@@ -1323,7 +1456,14 @@ function bookingModal(booking, prefillPet) {
     const services = $$(".b-svc").filter((cb) => cb.checked).map((cb) => cb.dataset.svc);
     if (!services.length) { el.textContent = ""; return; }
     const est = estimateCost(weight, services, $("#b-species").value);
-    el.textContent = est ? `Estimated cost: ${est.label} (${est.tier})` : "Add the pet's weight to estimate cost.";
+    if (est) {
+      el.innerHTML = `Estimated: ${est.label} (${est.tier})${costTouched ? ' · <button class="link" id="use-estimate" type="button">use this</button>' : ""}`;
+      if (!costTouched) $("#b-cost").value = Math.round((est.min + est.max) / 2);
+      const useBtn = $("#use-estimate");
+      if (useBtn) useBtn.onclick = () => { costTouched = false; $("#b-cost").value = Math.round((est.min + est.max) / 2); updateCostEstimate(); };
+    } else {
+      el.textContent = "Add the pet's weight to estimate cost.";
+    }
   }
 
   petInput.addEventListener("input", () => {
@@ -1356,6 +1496,7 @@ function bookingModal(booking, prefillPet) {
     paintAvatar();
   };
   $("#b-weight").addEventListener("input", updateCostEstimate);
+  $("#b-cost").addEventListener("input", () => { costTouched = true; updateCostEstimate(); });
 
   paintAvatar(); paintStatus();
   if (matchedPet) prefillHoursFromPet(); else updateTotal();
@@ -1371,7 +1512,7 @@ function bookingModal(booking, prefillPet) {
       if (!hrInput.value || Number(hrInput.value) <= 0) { toast(`Please enter hours for ${cb.dataset.svc}`); hrInput.focus(); return; }
     }
 
-    const groomerId = $("#b-groomer").value;
+    const groomerId = $("#b-groomer").value === "none" ? null : $("#b-groomer").value;
     const breed = $("#b-breed").value.trim();
     const weight = $("#b-weight").value.trim();
     const species = $("#b-species").value;
@@ -1412,9 +1553,12 @@ function bookingModal(booking, prefillPet) {
       recurrenceUntil: recurrence !== "none" ? ($("#b-until").value || null) : null,
       services: checkedServices.map((c) => c.dataset.svc),
       serviceHours,
+      totalCost: $("#b-cost").value === "" ? null : Number($("#b-cost").value),
       notes: $("#b-notes").value.trim(),
       calendarEventId: b.calendarEventId || null,
       calendarDirty: true, // cleared once any connected device successfully syncs it — see reconcileCalendar()
+      status: b.status || "pending",
+      completedAt: b.completedAt || null,
     };
     await DB.put("bookings", rec);
     upsertLocal("bookings", rec);
@@ -1579,6 +1723,10 @@ function bindView() {
     render();
   });
 
+  // financial month picker
+  const finMonth = $("#fin-month-picker");
+  if (finMonth) finMonth.onchange = () => { if (finMonth.value) { state.financialMonth = finMonth.value; render(); } };
+
   // actions
   $$("[data-action]").forEach((el) => el.onclick = () => handleAction(el.dataset.action, el.dataset));
 }
@@ -1631,6 +1779,30 @@ async function handleAction(action, data) {
         if (deleted) logActivity("booking", "deleted", `${deleted.petName}${deleted.breed ? ` (${deleted.breed})` : ""} with ${groomerName(deleted.groomerId)}`);
       }
       break;
+    case "complete-booking": {
+      const b = state.bookings.find((x) => x.id === data.id);
+      if (b && confirm(`Mark ${b.petName}'s booking as completed?`)) {
+        const rec = { ...b, status: "completed", completedAt: Date.now() };
+        await DB.put("bookings", rec); upsertLocal("bookings", rec); toast("Booking completed"); render();
+        logActivity("booking", "completed", `${b.petName}${b.breed ? ` (${b.breed})` : ""} with ${groomerName(b.groomerId)}`);
+      }
+      break;
+    }
+    case "cancel-booking": {
+      const b = state.bookings.find((x) => x.id === data.id);
+      if (b && confirm(`Cancel ${b.petName}'s booking?`)) {
+        const rec = { ...b, status: "cancelled", completedAt: Date.now() };
+        await DB.put("bookings", rec); upsertLocal("bookings", rec); toast("Booking cancelled"); render();
+        if (b.calendarEventId) {
+          const tomb = { id: DB.uid("tomb"), calendarId: getCalendarId() || null, eventId: b.calendarEventId, petName: b.petName, deletedAt: Date.now() };
+          await DB.put("calendarTombstones", tomb);
+          upsertLocal("calendarTombstones", tomb);
+          reconcileCalendar();
+        }
+        logActivity("booking", "cancelled", `${b.petName}${b.breed ? ` (${b.breed})` : ""} with ${groomerName(b.groomerId)}`);
+      }
+      break;
+    }
     case "new-groomer": groomerModal(null); break;
     case "edit-groomer": groomerModal(state.groomers.find((g) => g.id === data.id)); break;
     case "del-groomer": {
@@ -1680,6 +1852,9 @@ async function handleAction(action, data) {
     case "mini-cal-prev": state.scheduleDate = addMonthsKey(state.scheduleDate || todayKey(), -1); render(); break;
     case "mini-cal-next": state.scheduleDate = addMonthsKey(state.scheduleDate || todayKey(), 1); render(); break;
     case "edit-hours": hoursModal(); break;
+    case "fin-prev": state.financialMonth = addMonthsToMonthKey(state.financialMonth || todayKey().slice(0, 7), -1); render(); break;
+    case "fin-next": state.financialMonth = addMonthsToMonthKey(state.financialMonth || todayKey().slice(0, 7), 1); render(); break;
+    case "fin-today": state.financialMonth = todayKey().slice(0, 7); render(); break;
     case "clear-search": state.search = { name: "", breed: "" }; render(); break;
     case "go-pets": go("pets"); break;
   }

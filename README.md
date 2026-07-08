@@ -76,11 +76,23 @@ any data regardless).
 - **Bookings** — pick an existing pet (shows its photo, autofills breed/groomer/typical
   service times) or create a new pet profile right from the booking form. Each selected
   service needs its hours entered (used as the Google Calendar event duration later), and
-  shows a live **estimated cost** based on the pet's weight tier. Repeat **one-time / weekly
-  / every 2 weeks / monthly**, with an optional **repeat-until** end date. Each booking row
-  has a 📋 button that copies a ready-to-send confirmation message to the clipboard —
+  the **total cost** defaults to a live estimate from the pet's weight tier but can be
+  overwritten by hand at any time (a "use this" link brings back the estimate). Groomer can
+  be a specific person or **No preference** (shows in its own "No preference" column on the
+  Schedule Day view). Repeat **one-time / weekly / every 2 weeks / monthly**, with an
+  optional **repeat-until** end date. Each booking row has a 📋 button that copies a
+  ready-to-send confirmation message to the clipboard —
   `confirmed น้อง {name} {breed} {date & time}` — for pasting straight to the customer (uses
   the upcoming date for recurring bookings), plus the estimated total if the pet's weight is known.
+  Once a booking's date (or, for recurring ones, its repeat-until date) has passed without being
+  resolved, it moves into a **Past bookings — needs confirmation** section with **✓ Complete**
+  / **✕ Cancel** buttons; confirming moves it into **Completed Bookings** or **Cancelled
+  Bookings** (collapsed by default, cancelling also removes its Google Calendar event same as
+  deleting).
+- **Financial** — pick any month and see total revenue, how many customers were served, and
+  a per-groomer breakdown of bookings and earnings for that month. Figures are based on
+  **when a booking was marked Completed**, not its original scheduled date (so a recurring
+  booking resolved late still counts for the month it was actually closed out).
 - **Groomers** — add/remove groomers, each with a color (the full Google Calendar palette,
   11 colors including yellow). Seeded with **Mint, Mikka, Boat**.
 

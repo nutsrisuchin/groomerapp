@@ -216,6 +216,15 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 .dot{width:10px; height:10px; border-radius:50%; display:inline-block; flex:none}
 .groomer-tag{display:inline-flex; align-items:center; gap:7px; font-weight:600; font-size:13px}
 .recur-badge{font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--brand); background:rgba(124,92,255,.1); padding:2px 8px; border-radius:6px}
+.status-badge{font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; padding:2px 8px; border-radius:6px; margin-left:4px; display:inline-block}
+.status-completed{color:var(--ok); background:rgba(47,158,99,.12)}
+.status-cancelled{color:var(--danger); background:rgba(229,72,77,.12)}
+.pastdue-card{border-color:#f5c26b}
+.pastdue-title{color:#a8710a}
+.bookings-collapsible summary{cursor:pointer; font-weight:700; list-style:none; padding:16px 20px}
+.bookings-collapsible summary::-webkit-details-marker{display:none}
+.bookings-collapsible summary::before{content:"▸"; display:inline-block; margin-right:8px; transition:transform .15s}
+.bookings-collapsible[open] summary::before{transform:rotate(90deg)}
 
 /* ---------- Booking list ---------- */
 .booking{display:flex; gap:14px; align-items:center; padding:14px 16px; border-bottom:1px solid var(--line)}
@@ -241,6 +250,17 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 .activity-row{display:flex; gap:10px; align-items:flex-start; padding:8px 0; border-bottom:1px solid var(--line)}
 .activity-row:last-child{border-bottom:0}
 .activity-icon{font-size:15px; flex:none; width:22px; text-align:center; line-height:1.4}
+
+/* ---------- Financial ---------- */
+.fin-toolbar{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap}
+.fin-toolbar input[type=month]{
+  width:auto; padding:8px 12px; border:1px solid var(--line);
+  border-radius:var(--radius-sm); background:var(--surface); color:var(--ink);
+}
+.fin-stats{display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:16px; margin-top:16px}
+.fin-stat-value{font-size:28px; font-weight:800; margin-top:4px}
+.fin-groomer-row{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 0; border-bottom:1px solid var(--line)}
+.fin-groomer-row:last-child{border-bottom:0}
 
 /* ---------- Schedule: Google-Calendar-style layout ---------- */
 .gcal-layout{display:flex; gap:20px; align-items:flex-start}
