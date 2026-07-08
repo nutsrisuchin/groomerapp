@@ -1213,7 +1213,7 @@ function adminModal() {
 =================================================================== */
 function bindView() {
   // navigation
-  $$("[data-nav]").forEach((el) => el.onclick = () => go(el.dataset.nav));
+  $$("[data-nav]").forEach((el) => el.onclick = () => { go(el.dataset.nav); closeMobileNav(); });
   // open pet cards
   $$("[data-open-pet]").forEach((el) => el.onclick = () => go("pet", el.dataset.openPet));
 
@@ -1317,6 +1317,17 @@ document.addEventListener("click", (e) => {
   const box = document.getElementById("pet-suggest");
   const input = document.getElementById("b-pet");
   if (box && !box.hidden && e.target !== input && !box.contains(e.target)) box.hidden = true;
+});
+
+// Mobile nav dropdown (the tab bar collapses behind a hamburger under 820px)
+function closeMobileNav() { const t = document.getElementById("topnav"); if (t) t.classList.remove("open"); }
+$("#nav-toggle").addEventListener("click", (e) => {
+  e.stopPropagation();
+  document.getElementById("topnav").classList.toggle("open");
+});
+document.addEventListener("click", (e) => {
+  const t = document.getElementById("topnav");
+  if (t && t.classList.contains("open") && !t.contains(e.target) && e.target.id !== "nav-toggle") closeMobileNav();
 });
 
 /* ===================================================================
