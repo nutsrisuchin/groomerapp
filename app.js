@@ -1129,7 +1129,7 @@ async function syncBookingToCalendar(rec) {
     }
   } catch (err) {
     console.error("Calendar sync failed", err);
-    toast("Saved, but Google Calendar sync failed — try reconnecting.");
+    toast(`Saved, but Google Calendar sync failed (${err.message || err}) — try reconnecting.`);
   }
 }
 function toLocalInput(d) {
