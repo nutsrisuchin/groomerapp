@@ -94,7 +94,12 @@
       if (!retried) { try { return await call(method, calendarId, path, body, true); } catch (err) { /* fall through */ } }
       throw new Error("token-expired");
     }
-    if (!res.ok) throw new Error(`calendar-api-${res.status}`);
+    if (!res.ok) {
+      let detail = "";
+      try { const body = await res.json(); detail = body && body.error && body.error.message ? `: ${body.error.message}` : ""; }
+      catch (err) { /* body wasn't JSON, nothing more to add */ }
+      throw new Error(`calendar-api-${res.status}${detail}`);
+    }
     return res.status === 204 ? null : res.json();
   }
 
