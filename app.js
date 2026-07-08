@@ -1117,7 +1117,8 @@ function bookingModal(booking, prefillPet) {
 // Best-effort: a Calendar failure here never undoes or blocks the booking save above.
 async function syncBookingToCalendar(rec) {
   const calendarId = getCalendarId();
-  if (!calendarId || !GCal.isConnected()) return;
+  if (!calendarId) { toast("Saved, but no Calendar ID is set — add one in the Calendar tab to sync."); return; }
+  if (!GCal.isConnected()) { toast("Saved, but Google Calendar isn't connected — connect it in the Calendar tab to sync."); return; }
   try {
     const eventId = await GCal.syncBooking(calendarId, rec, groomerById(rec.groomerId));
     if (eventId !== rec.calendarEventId) {
