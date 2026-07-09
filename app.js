@@ -1722,9 +1722,10 @@ function importCandidateFromEvent(ev) {
     const each = Math.round((hours / parsed.services.length) * 2) / 2 || 0.5;
     parsed.services.forEach((s) => { serviceHours[s] = each; });
   }
-  const matchedPet = parsed.petName
-    ? state.pets.find((p) => p.name.trim().toLowerCase() === parsed.petName.trim().toLowerCase())
-    : null;
+  const nameMatches = parsed.petName
+    ? state.pets.filter((p) => p.name.trim().toLowerCase() === parsed.petName.trim().toLowerCase())
+    : [];
+  const matchedPet = nameMatches.length === 1 ? nameMatches[0] : null;
   const groomer = groomerByCalendarColorId(ev.colorId);
   return {
     eventId: ev.id,
@@ -1732,6 +1733,9 @@ function importCandidateFromEvent(ev) {
     allDay: !timed,
     colorId: ev.colorId || null, // Calendar's own color id for this event, e.g. "10" — see calendarColorHex()
     petId: matchedPet ? matchedPet.id : null,
+    // More than one pet shares this name — don't guess which one, surface it for a human
+    // to pick instead (see "special attention" grouping in renderImportReview).
+    ambiguousPets: nameMatches.length > 1 ? nameMatches : null,
     petName: parsed.petName,
     breed: parsed.breed || (matchedPet ? matchedPet.breed || "" : ""),
     services: parsed.services,
@@ -1800,6 +1804,14 @@ function importRow(c, i) {
       <input id="imp-start-${i}" type="datetime-local" value="${toLocalInput(c.start)}" style="width:auto">
     </div>
     ${c.allDay ? `<div class="faint" style="font-size:11px; color:#a8710a; margin-top:4px">⚠ This was an all-day event on Calendar — no time was set, so 10:00 was guessed. Check it.</div>` : ""}
+    ${c.ambiguousPets ? `
+      <div class="field" style="margin-top:8px">
+        <label style="color:#a8710a">${c.ambiguousPets.length} pets are named "${esc(c.petName)}" — which one is this?</label>
+        <select id="imp-petpick-${i}">
+          <option value="">— Not sure, don't link to a pet profile —</option>
+          ${c.ambiguousPets.map((p) => `<option value="${p.id}">${esc(p.name)} · ${esc(p.breed || "no breed on file")}${p.weight ? ` · ${p.weight}kg` : ""} · ${esc(groomerName(p.groomerId))}</option>`).join("")}
+        </select>
+      </div>` : ""}
     <div class="field-row" style="margin-top:8px">
       <input id="imp-breed-${i}" value="${esc(c.breed)}" placeholder="Breed">
       <div>
@@ -1842,14 +1854,27 @@ function renderImportReview(candidates, totalFetched) {
       <div class="row" style="justify-content:flex-end; margin-top:14px"><button class="btn primary" data-close-modal>Close</button></div>`);
     return;
   }
+  const indexed = candidates.map((c, i) => ({ c, i }));
+  const ambiguous = indexed.filter((x) => x.c.ambiguousPets);
+  const normal = indexed.filter((x) => !x.c.ambiguousPets);
+
   openModal(`
     <h2>Review ${candidates.length} booking${candidates.length === 1 ? "" : "s"} to import</h2>
     <div class="muted" style="margin-bottom:12px">
       Fix anything that looks off, untick anything that isn't really a booking, then import.
       ${skipped > 0 ? `<br><span class="faint">${skipped} event${skipped === 1 ? "" : "s"} already linked to an existing booking ${skipped === 1 ? "was" : "were"} skipped.</span>` : ""}
     </div>
-    <div class="stack" id="imp-rows" style="gap:10px; max-height:50vh; overflow:auto; padding-right:4px">
-      ${candidates.map((c, i) => importRow(c, i)).join("")}
+    <div class="stack" id="imp-rows" style="gap:14px; max-height:55vh; overflow:auto; padding-right:4px">
+      ${ambiguous.length ? `
+        <div class="card pastdue-card" style="padding-bottom:2px">
+          <div class="card pad" style="padding-bottom:0; border:0">
+            <h3 class="section-title pastdue-title">⚠ Special attention — name matches more than one pet (${ambiguous.length})</h3>
+          </div>
+          <div class="stack" style="gap:10px; padding:0 16px 16px">
+            ${ambiguous.map((x) => importRow(x.c, x.i)).join("")}
+          </div>
+        </div>` : ""}
+      ${normal.length ? `<div class="stack" style="gap:10px">${normal.map((x) => importRow(x.c, x.i)).join("")}</div>` : ""}
     </div>
     <div class="row" style="justify-content:space-between; margin-top:14px; align-items:center">
       <label class="row" style="gap:6px; font-size:13px"><input type="checkbox" id="imp-select-all" checked> Select all</label>
@@ -1860,6 +1885,17 @@ function renderImportReview(candidates, totalFetched) {
     </div>`);
 
   $("#imp-select-all").onchange = (e) => { $$(".imp-row-check").forEach((cb) => cb.checked = e.target.checked); };
+
+  // Picking a specific pet for an ambiguous row fills in its breed too, same convenience
+  // the normal booking form gives when a pet is matched.
+  ambiguous.forEach(({ c, i }) => {
+    const pick = $(`#imp-petpick-${i}`);
+    if (!pick) return;
+    pick.onchange = () => {
+      const chosen = c.ambiguousPets.find((p) => p.id === pick.value);
+      if (chosen && chosen.breed) $(`#imp-breed-${i}`).value = chosen.breed;
+    };
+  });
 
   $("#imp-confirm").onclick = async () => {
     const selected = candidates.map((c, i) => i).filter((i) => $(`#imp-check-${i}`).checked);
@@ -1887,10 +1923,11 @@ function renderImportReview(candidates, totalFetched) {
         services.forEach((s) => { serviceHours[s] = each; });
       }
       const isPast = new Date(startIso) < new Date();
+      const petId = c.ambiguousPets ? ($(`#imp-petpick-${i}`).value || null) : c.petId;
       const rec = {
         id: DB.uid("bk"),
         createdAt: Date.now(),
-        petId: c.petId,
+        petId,
         petName,
         breed,
         groomerId,
