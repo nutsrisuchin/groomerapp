@@ -634,7 +634,7 @@ function viewBookings() {
 
   <div class="card bookings-section" style="margin-bottom:16px">
     <div class="card pad" style="padding-bottom:0; border:0"><h3 class="section-title">📆 Upcoming Bookings (${upcoming.length})</h3></div>
-    ${upcoming.length ? upcoming.map((b) => bookingRow(b)).join("")
+    ${upcoming.length ? upcoming.map((b) => bookingRow(b, { showResolveActions: true })).join("")
       : emptyBlock("📅", "No upcoming bookings", "Create a booking — it's ready to sync to Google Calendar later.", "new-booking", "New booking")}
   </div>
 
