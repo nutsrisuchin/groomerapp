@@ -770,6 +770,40 @@ function bookingConfirmMessage(b) {
   return ["confirmed", "น้อง", b.petName, b.breed, `${fmtDate(when)} ${fmtTime(when)}`].filter(Boolean).join(" ");
 }
 
+// Confirming "Complete" also doubles as the last chance to fix the price — one modal
+// instead of editing the booking separately and then confirming, since in practice the
+// final price is often only known once the service is actually done. Pre-filled with
+// whatever price the booking already has (or the weight-tier estimate), so doing nothing
+// just keeps that value; leaving it genuinely blank clears it, same as the booking form.
+function completeBookingModal(b) {
+  const pet = b.petId ? state.pets.find((p) => p.id === b.petId) : null;
+  const est = pet ? estimateCost(pet.weight, b.services, pet.species) : null;
+  const prefill = (b.totalCost != null && b.totalCost !== "") ? b.totalCost
+    : (est ? Math.round((est.min + est.max) / 2) : "");
+  openModal(`
+    <h2>Complete booking</h2>
+    <div class="muted" style="margin-bottom:16px">
+      Mark ${esc(b.petName)}${b.breed ? ` (${esc(b.breed)})` : ""}'s booking as completed.
+    </div>
+    <div class="field">
+      <label>Total cost (฿) — optional</label>
+      <input id="cb-cost" type="number" min="0" step="1" placeholder="0" value="${esc(prefill)}">
+      ${est ? `<div class="help">Estimated: ${est.label} (${est.tier})</div>` : ""}
+    </div>
+    <div class="row" style="justify-content:flex-end; margin-top:8px">
+      <button class="btn" data-close-modal>Cancel</button>
+      <button class="btn primary" id="confirm-complete">✓ Mark completed</button>
+    </div>`);
+
+  $("#confirm-complete").onclick = async () => {
+    const costVal = $("#cb-cost").value;
+    const rec = { ...b, status: "completed", completedAt: Date.now(), totalCost: costVal === "" ? null : Number(costVal) };
+    await DB.put("bookings", rec); upsertLocal("bookings", rec);
+    closeModal(); toast("Booking completed"); render();
+    logActivity("booking", "completed", `${b.petName}${b.breed ? ` (${b.breed})` : ""} with ${groomerName(b.groomerId)}`);
+  };
+}
+
 /* ---------- GROOMERS ---------- */
 function viewGroomers() {
   return `
@@ -2223,11 +2257,7 @@ async function handleAction(action, data) {
       break;
     case "complete-booking": {
       const b = state.bookings.find((x) => x.id === data.id);
-      if (b && confirm(`Mark ${b.petName}'s booking as completed?`)) {
-        const rec = { ...b, status: "completed", completedAt: Date.now() };
-        await DB.put("bookings", rec); upsertLocal("bookings", rec); toast("Booking completed"); render();
-        logActivity("booking", "completed", `${b.petName}${b.breed ? ` (${b.breed})` : ""} with ${groomerName(b.groomerId)}`);
-      }
+      if (b) completeBookingModal(b);
       break;
     }
     case "cancel-booking": {
