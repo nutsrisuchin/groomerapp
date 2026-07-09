@@ -1695,6 +1695,10 @@ function fromLocalInput(v) { return new Date(v).toISOString(); }
    "adopted" rather than duplicated: future edits in the app PATCH that same event instead of
    creating a second one, and re-running the import later naturally skips it. ---------- */
 const alreadyImportedEventIds = () => new Set(state.bookings.filter((b) => b.calendarEventId).map((b) => b.calendarEventId));
+// Google Calendar's own hex for a given event colorId, using the same 11-color palette
+// GROOMER_COLORS already encodes — lets an import row show the event's real Calendar color
+// even for colorIds no current groomer happens to use.
+const calendarColorHex = (colorId) => { const c = GROOMER_COLORS.find((g) => g.calendarColorId === colorId); return c ? c.color : null; };
 
 function importCandidateFromEvent(ev) {
   const timed = ev.start && ev.start.dateTime;
@@ -1720,6 +1724,7 @@ function importCandidateFromEvent(ev) {
     eventId: ev.id,
     start: startIso,
     allDay: !timed,
+    colorId: ev.colorId || null, // Calendar's own color id for this event, e.g. "10" — see calendarColorHex()
     petId: matchedPet ? matchedPet.id : null,
     petName: parsed.petName,
     breed: parsed.breed || (matchedPet ? matchedPet.breed || "" : ""),
@@ -1791,11 +1796,19 @@ function importRow(c, i) {
     ${c.allDay ? `<div class="faint" style="font-size:11px; color:#a8710a; margin-top:4px">⚠ This was an all-day event on Calendar — no time was set, so 10:00 was guessed. Check it.</div>` : ""}
     <div class="field-row" style="margin-top:8px">
       <input id="imp-breed-${i}" value="${esc(c.breed)}" placeholder="Breed">
-      <select id="imp-groomer-${i}">
-        <option value="">— Choose —</option>
-        <option value="none" ${!c.groomerId ? "selected" : ""}>No preference</option>
-        ${state.groomers.map((g) => `<option value="${g.id}" ${c.groomerId === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}
-      </select>
+      <div>
+        <div class="row" style="gap:8px">
+          <span class="dot" style="background:${calendarColorHex(c.colorId) || "#c3c8d4"}"></span>
+          <select id="imp-groomer-${i}" style="flex:1">
+            <option value="">— Choose —</option>
+            <option value="none" ${!c.groomerId ? "selected" : ""}>No preference</option>
+            ${state.groomers.map((g) => `<option value="${g.id}" ${c.groomerId === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="faint" style="font-size:11px; margin-top:3px">
+          ${c.groomerId ? `matched by color` : (c.colorId ? "event has a color, but no groomer uses it" : "no color on this event")}
+        </div>
+      </div>
     </div>
     <div class="row" style="gap:14px; font-size:13px; margin-top:8px">
       ${SERVICES.map((s) => `<label class="row" style="gap:6px"><input type="checkbox" class="imp-svc" data-idx="${i}" data-svc="${esc(s)}" ${c.services.includes(s) ? "checked" : ""}> ${esc(s)}</label>`).join("")}
