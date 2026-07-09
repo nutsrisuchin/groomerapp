@@ -153,6 +153,13 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 .field-row{display:grid; grid-template-columns:1fr 1fr; gap:12px}
 .field-row.three{grid-template-columns:1fr 1fr 1fr}
 @media(max-width:520px){ .field-row, .field-row.three{grid-template-columns:1fr} }
+
+/* ---------- Calendar import review rows ---------- */
+.imp-row input, .imp-row select{
+  padding:9px 10px; border:1px solid var(--line); border-radius:var(--radius-sm);
+  background:var(--surface); color:var(--ink); font-size:16px; min-width:0;
+}
+.imp-row input:focus, .imp-row select:focus{outline:none; border-color:var(--brand); box-shadow:0 0 0 3px rgba(124,92,255,.15)}
 .help{font-size:12px; color:var(--ink-faint)}
 
 /* ---------- Search bar (home) ---------- */

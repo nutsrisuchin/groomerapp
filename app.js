@@ -113,6 +113,56 @@ async function rememberBreed(breed) {
   upsertLocal("settings", rec);
 }
 
+// Every non-empty, in-order run of SERVICES (plus the 2-service combo reversed, in case a
+// title lists them the other way round), longest text first — used to greedily match the
+// service portion of an imported Calendar event's title. Small by construction (SERVICES
+// only has 2 entries today) so this stays cheap even recomputed on every parse.
+function serviceCombos() {
+  const combos = [];
+  for (let i = 0; i < SERVICES.length; i++) {
+    for (let j = i; j < SERVICES.length; j++) combos.push(SERVICES.slice(i, j + 1));
+  }
+  if (SERVICES.length === 2) combos.push([SERVICES[1], SERVICES[0]]);
+  return combos.sort((a, b) => b.join(", ").length - a.join(", ").length);
+}
+// All known breed names (both species + anything staff has typed before), longest first so
+// a multi-word breed matches before a shorter one that happens to be its prefix.
+function allKnownBreeds() {
+  const seen = new Set();
+  const out = [];
+  [...DOG_BREEDS, ...CAT_BREEDS, ...getCustomBreeds()].forEach((b) => {
+    const key = b.trim().toLowerCase();
+    if (key && !seen.has(key)) { seen.add(key); out.push(b.trim()); }
+  });
+  return out.sort((a, b) => b.length - a.length);
+}
+// Best-effort parse of a Calendar event title built as "Name Breed Service[, Service] Remark"
+// back into booking fields — used only by the one-time Calendar import tool (see
+// calendarImportModal below). Pet name is assumed to be the first word (matches how the app
+// itself always builds titles); breed and service are matched against known lists so
+// anything left over falls through to notes. Never throws — worst case everything after the
+// name lands in notes for a human to sort out during the review step.
+function parseEventSummary(summary) {
+  const text = (summary || "").trim();
+  if (!text) return { petName: "", breed: "", services: [], notes: "" };
+  const tokens = text.split(/\s+/);
+  const petName = tokens.shift() || "";
+  let rest = tokens.join(" ");
+
+  let breed = "";
+  for (const b of allKnownBreeds()) {
+    if (rest.toLowerCase().startsWith(b.toLowerCase())) { breed = b; rest = rest.slice(b.length).trim(); break; }
+  }
+
+  let services = [];
+  for (const combo of serviceCombos()) {
+    const label = combo.join(", ");
+    if (rest.toLowerCase().startsWith(label.toLowerCase())) { services = combo; rest = rest.slice(label.length).trim(); break; }
+  }
+
+  return { petName, breed, services, notes: rest };
+}
+
 /* ---------- tiny DOM helpers ---------- */
 const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -307,6 +357,7 @@ function bookingDurationHours(b) {
 const groomerById = (id) => state.groomers.find((g) => g.id === id);
 function groomerColor(id) { const g = groomerById(id); return g ? g.color : "#c3c8d4"; }
 function groomerName(id) { const g = groomerById(id); return g ? g.name : "No preference"; }
+const groomerByCalendarColorId = (colorId) => colorId ? state.groomers.find((g) => g.calendarColorId === colorId) : null;
 function findMatchingPets(query, limit = 6) {
   const q = query.trim().toLowerCase();
   if (!q) return [];
@@ -762,7 +813,16 @@ function viewCalendarSettings() {
         Every booking syncs here, regardless of who connects — the groomer's color tells them apart.</div>
     </div>
     <button class="btn primary sm" data-action="gcal-save-id">Save Calendar ID</button>
-  </div>`;
+  </div>
+  ${calendarId ? `
+    <div class="card pad" style="margin-top:16px">
+      <strong>Import existing bookings</strong>
+      <div class="faint" style="font-size:12px; margin:4px 0 12px">
+        Already have bookings sitting in this calendar from before? Pull them in as bookings here —
+        safe to run more than once, already-imported events are skipped automatically.
+      </div>
+      <button class="btn sm" data-action="gcal-import">Import from Calendar</button>
+    </div>` : ""}`;
 }
 
 /* ---------- SCHEDULE (Google-Calendar-style: sidebar + toolbar + views) ---------- */
@@ -1628,6 +1688,200 @@ function toLocalInput(d) {
 }
 function fromLocalInput(v) { return new Date(v).toISOString(); }
 
+/* ---------- Calendar import (one-time: pulls existing Calendar events into bookings) ---------
+   Normal sync only ever writes to Calendar, never reads it back — this is the one place the
+   app looks at what's already there, and only when explicitly asked. Every imported booking
+   is stamped with the source event's id (calendarEventId) and calendarDirty:false, so it's
+   "adopted" rather than duplicated: future edits in the app PATCH that same event instead of
+   creating a second one, and re-running the import later naturally skips it. ---------- */
+const alreadyImportedEventIds = () => new Set(state.bookings.filter((b) => b.calendarEventId).map((b) => b.calendarEventId));
+
+function importCandidateFromEvent(ev) {
+  const startIso = ev.start && ev.start.dateTime;
+  if (!startIso) return null; // all-day (date-only) or malformed event — not a real timed booking
+  const endIso = ev.end && ev.end.dateTime;
+  const parsed = parseEventSummary(ev.summary);
+  const hours = endIso ? Math.max(0.5, Math.round(((new Date(endIso) - new Date(startIso)) / 3600000) * 2) / 2) : 1;
+  const serviceHours = {};
+  if (parsed.services.length) {
+    const each = Math.round((hours / parsed.services.length) * 2) / 2 || 0.5;
+    parsed.services.forEach((s) => { serviceHours[s] = each; });
+  }
+  const matchedPet = parsed.petName
+    ? state.pets.find((p) => p.name.trim().toLowerCase() === parsed.petName.trim().toLowerCase())
+    : null;
+  const groomer = groomerByCalendarColorId(ev.colorId);
+  return {
+    eventId: ev.id,
+    start: startIso,
+    petId: matchedPet ? matchedPet.id : null,
+    petName: parsed.petName,
+    breed: parsed.breed || (matchedPet ? matchedPet.breed || "" : ""),
+    services: parsed.services,
+    serviceHours,
+    notes: parsed.notes,
+    groomerId: groomer ? groomer.id : null,
+  };
+}
+
+function calendarImportModal() {
+  const calendarId = getCalendarId();
+  if (!calendarId) { toast("Save a Calendar ID first"); return; }
+  const defaultFrom = addMonthsKey(todayKey(), -24);
+  openModal(`
+    <h2>Import bookings from Calendar</h2>
+    <div class="muted" style="margin-bottom:14px">
+      Pulls events from the connected calendar into bookings here, parsed from each title
+      (Name · Breed · Service · Remark). Events already linked to an existing booking are
+      skipped automatically — safe to re-run any time.
+    </div>
+    <div class="field-row">
+      <div class="field"><label>From</label><input id="imp-from" type="date" value="${defaultFrom}"></div>
+      <div class="field"><label>To</label><input id="imp-to" type="date" value="${todayKey()}"></div>
+    </div>
+    <div class="help" id="imp-status"></div>
+    <div class="row" style="justify-content:flex-end; margin-top:8px">
+      <button class="btn" data-close-modal>Cancel</button>
+      <button class="btn primary" id="imp-fetch">Fetch events</button>
+    </div>`);
+
+  $("#imp-fetch").onclick = async () => {
+    const fromV = $("#imp-from").value, toV = $("#imp-to").value;
+    if (!fromV || !toV) { toast("Pick both dates"); return; }
+    const btn = $("#imp-fetch");
+    btn.disabled = true; btn.textContent = "Fetching…";
+    $("#imp-status").textContent = "";
+    try {
+      if (!GCal.isConnected()) await GCal.connect(); // must run inside this click handler for the popup
+      const events = await GCal.listEvents(calendarId, {
+        timeMin: new Date(fromV + "T00:00:00").toISOString(),
+        timeMax: new Date(toV + "T23:59:59").toISOString(),
+      });
+      const known = alreadyImportedEventIds();
+      const candidates = events
+        .filter((ev) => ev.status !== "cancelled" && !known.has(ev.id))
+        .map(importCandidateFromEvent)
+        .filter(Boolean);
+      renderImportReview(candidates, events.length);
+    } catch (err) {
+      $("#imp-status").textContent = `Couldn't fetch events (${err.message || err}).`;
+      btn.disabled = false; btn.textContent = "Fetch events";
+    }
+  };
+}
+
+function importRow(c, i) {
+  const when = new Date(c.start);
+  return `
+  <div class="card pad imp-row">
+    <div class="row" style="justify-content:space-between; align-items:center; gap:10px">
+      <label class="row" style="gap:8px; align-items:center; flex:1; min-width:0">
+        <input type="checkbox" class="imp-row-check" id="imp-check-${i}" checked>
+        <input id="imp-name-${i}" value="${esc(c.petName)}" placeholder="Pet name" style="flex:1">
+      </label>
+      <div class="faint" style="font-size:12px; white-space:nowrap">${fmtDate(when)} ${fmtTime(when)}</div>
+    </div>
+    <div class="field-row" style="margin-top:8px">
+      <input id="imp-breed-${i}" value="${esc(c.breed)}" placeholder="Breed">
+      <select id="imp-groomer-${i}">
+        <option value="">— Choose —</option>
+        <option value="none" ${!c.groomerId ? "selected" : ""}>No preference</option>
+        ${state.groomers.map((g) => `<option value="${g.id}" ${c.groomerId === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}
+      </select>
+    </div>
+    <div class="row" style="gap:14px; font-size:13px; margin-top:8px">
+      ${SERVICES.map((s) => `<label class="row" style="gap:6px"><input type="checkbox" class="imp-svc" data-idx="${i}" data-svc="${esc(s)}" ${c.services.includes(s) ? "checked" : ""}> ${esc(s)}</label>`).join("")}
+    </div>
+    <div class="field-row" style="margin-top:8px">
+      <input id="imp-cost-${i}" type="number" min="0" step="1" placeholder="Total cost ฿ (optional)">
+      <input id="imp-notes-${i}" value="${esc(c.notes)}" placeholder="Remark">
+    </div>
+  </div>`;
+}
+
+function renderImportReview(candidates, totalFetched) {
+  const skipped = totalFetched - candidates.length;
+  if (!candidates.length) {
+    openModal(`
+      <h2>Import bookings from Calendar</h2>
+      <div class="muted">Found ${totalFetched} event${totalFetched === 1 ? "" : "s"} in that range — all
+        ${totalFetched === 1 ? "is" : "are"} already linked to a booking here, or had no usable start
+        time. Nothing new to import.</div>
+      <div class="row" style="justify-content:flex-end; margin-top:14px"><button class="btn primary" data-close-modal>Close</button></div>`);
+    return;
+  }
+  openModal(`
+    <h2>Review ${candidates.length} booking${candidates.length === 1 ? "" : "s"} to import</h2>
+    <div class="muted" style="margin-bottom:12px">
+      Fix anything that looks off, untick anything that isn't really a booking, then import.
+      ${skipped > 0 ? `<br><span class="faint">${skipped} event${skipped === 1 ? "" : "s"} already linked to an existing booking ${skipped === 1 ? "was" : "were"} skipped.</span>` : ""}
+    </div>
+    <div class="stack" id="imp-rows" style="gap:10px; max-height:50vh; overflow:auto; padding-right:4px">
+      ${candidates.map((c, i) => importRow(c, i)).join("")}
+    </div>
+    <div class="row" style="justify-content:space-between; margin-top:14px; align-items:center">
+      <label class="row" style="gap:6px; font-size:13px"><input type="checkbox" id="imp-select-all" checked> Select all</label>
+      <div class="row">
+        <button class="btn" data-close-modal>Cancel</button>
+        <button class="btn primary" id="imp-confirm">Import selected</button>
+      </div>
+    </div>`);
+
+  $("#imp-select-all").onchange = (e) => { $$(".imp-row-check").forEach((cb) => cb.checked = e.target.checked); };
+
+  $("#imp-confirm").onclick = async () => {
+    const selected = candidates.map((c, i) => i).filter((i) => $(`#imp-check-${i}`).checked);
+    if (!selected.length) { toast("Nothing selected"); return; }
+    const btn = $("#imp-confirm");
+    btn.disabled = true; btn.textContent = "Importing…";
+    let count = 0;
+    for (const i of selected) {
+      const c = candidates[i];
+      const petName = $(`#imp-name-${i}`).value.trim();
+      if (!petName) continue;
+      const breed = $(`#imp-breed-${i}`).value.trim();
+      const groomerVal = $(`#imp-groomer-${i}`).value;
+      const groomerId = groomerVal === "none" || groomerVal === "" ? null : groomerVal;
+      const services = $$(".imp-svc").filter((cb) => cb.dataset.idx === String(i) && cb.checked).map((cb) => cb.dataset.svc);
+      const notes = $(`#imp-notes-${i}`).value.trim();
+      const costVal = $(`#imp-cost-${i}`).value;
+      const totalHours = Object.keys(c.serviceHours).length ? Object.values(c.serviceHours).reduce((a, v) => a + v, 0) : services.length;
+      const serviceHours = {};
+      if (services.length) {
+        const each = Math.round((totalHours / services.length) * 2) / 2 || 1;
+        services.forEach((s) => { serviceHours[s] = each; });
+      }
+      const isPast = new Date(c.start) < new Date();
+      const rec = {
+        id: DB.uid("bk"),
+        createdAt: Date.now(),
+        petId: c.petId,
+        petName,
+        breed,
+        groomerId,
+        start: c.start,
+        recurrence: "none",
+        recurrenceUntil: null,
+        services,
+        serviceHours,
+        totalCost: costVal === "" ? null : Number(costVal),
+        notes,
+        calendarEventId: c.eventId,
+        calendarDirty: false, // already matches what's on Calendar — nothing to push back
+        status: isPast ? "completed" : "pending",
+        completedAt: isPast ? new Date(c.start).getTime() : null,
+      };
+      await DB.put("bookings", rec);
+      upsertLocal("bookings", rec);
+      count++;
+    }
+    closeModal();
+    toast(`Imported ${count} booking${count === 1 ? "" : "s"}`);
+    render();
+    if (count) logActivity("booking", "created", `Imported ${count} booking${count === 1 ? "" : "s"} from Calendar`);
+  };
+}
+
 /* ---------- Groomer editor ---------- */
 function groomerModal(groomer) {
   const g = groomer || { color: GROOMER_COLORS[0].color, calendarColorId: GROOMER_COLORS[0].calendarColorId };
@@ -1831,6 +2085,7 @@ async function handleAction(action, data) {
       const rec = { id: "calendar", calendarId: id, updatedAt: Date.now() };
       await DB.put("settings", rec); upsertLocal("settings", rec); toast("Calendar ID saved"); render();
     } break;
+    case "gcal-import": calendarImportModal(); break;
     case "gcal-sync-now":
       toast("Syncing…");
       await reconcileCalendar();

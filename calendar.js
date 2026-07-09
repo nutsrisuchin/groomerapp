@@ -113,7 +113,7 @@
   function buildEventBody(booking, groomer) {
     const hours = Object.values(booking.serviceHours || {}).reduce((a, v) => a + (Number(v) || 0), 0) || 1;
     const end = new Date(new Date(booking.start).getTime() + hours * 3600 * 1000).toISOString();
-    const parts = [booking.petName, booking.breed, (booking.services || []).join(", ")].filter(Boolean);
+    const parts = [booking.petName, booking.breed, (booking.services || []).join(", "), booking.notes].filter(Boolean);
     // Google rejects the request outright ("Missing time zone definition") if it can't be
     // certain the dateTime is unambiguous — always pin an explicit IANA zone as a safety
     // net, even though booking.start should normally already carry a "Z"/UTC offset.
@@ -160,6 +160,24 @@
     if (!eventId) return;
     try { await call("DELETE", calendarId, `/${eventId}`); }
     catch (err) { if (!isGoneError(err)) throw err; }
+  };
+
+  // Reads existing events back out of a calendar — used only by the one-time import tool
+  // (normal sync is one-way, app -> Calendar, and never needs to list what's already there).
+  // Pages through everything in range and expands recurring events into instances.
+  api.listEvents = async function (calendarId, { timeMin, timeMax } = {}) {
+    const events = [];
+    let pageToken = null;
+    do {
+      const qs = new URLSearchParams({ singleEvents: "true", maxResults: "2500", orderBy: "startTime" });
+      if (timeMin) qs.set("timeMin", timeMin);
+      if (timeMax) qs.set("timeMax", timeMax);
+      if (pageToken) qs.set("pageToken", pageToken);
+      const data = await call("GET", calendarId, `?${qs.toString()}`, null);
+      events.push(...((data && data.items) || []));
+      pageToken = (data && data.nextPageToken) || null;
+    } while (pageToken);
+    return events;
   };
 
   window.GCal = api;

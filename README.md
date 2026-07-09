@@ -206,3 +206,14 @@ Once testing looks good: share the shop's real Google Calendar with whichever ac
 will connect (give them "Make changes to events" permission), add that account under
 *Test users* in step 2 above, then just paste the real Calendar ID into the app's Calendar
 tab and reconnect — no code changes needed.
+
+If that calendar already has bookings on it from before the app existed, they won't appear
+in the app automatically — sync only ever writes app → Calendar, it never reads existing
+events on its own. Use **Import from Calendar** (Calendar tab, once a Calendar ID is saved)
+to pull them in as bookings: pick a date range, it fetches those events and, for each one,
+parses the title (built as `Name Breed Service Remark`, same format the app itself writes)
+into pet name / breed / service / remark, guessing the groomer from the event's color. You
+review and fix each row (anything it couldn't confidently parse just lands in the remark
+field) before confirming. Each imported booking is tagged with the source event's id, so
+re-running the import later — or editing/cancelling that booking in the app afterward — never
+creates a duplicate event; events already linked to a booking are skipped automatically.
