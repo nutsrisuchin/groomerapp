@@ -1697,8 +1697,13 @@ function fromLocalInput(v) { return new Date(v).toISOString(); }
 const alreadyImportedEventIds = () => new Set(state.bookings.filter((b) => b.calendarEventId).map((b) => b.calendarEventId));
 
 function importCandidateFromEvent(ev) {
-  const startIso = ev.start && ev.start.dateTime;
-  if (!startIso) return null; // all-day (date-only) or malformed event — not a real timed booking
+  const timed = ev.start && ev.start.dateTime;
+  const allDayDate = ev.start && ev.start.date;
+  if (!timed && !allDayDate) return null; // no usable date at all
+  // All-day events (created by just typing a title into a day, no time set) carry no time —
+  // default to a plausible slot and flag it so the review step calls out that it needs a
+  // real look, rather than silently importing a booking at midnight.
+  const startIso = timed || `${allDayDate}T10:00:00`;
   const endIso = ev.end && ev.end.dateTime;
   const parsed = parseEventSummary(ev.summary);
   const hours = endIso ? Math.max(0.5, Math.round(((new Date(endIso) - new Date(startIso)) / 3600000) * 2) / 2) : 1;
@@ -1714,6 +1719,7 @@ function importCandidateFromEvent(ev) {
   return {
     eventId: ev.id,
     start: startIso,
+    allDay: !timed,
     petId: matchedPet ? matchedPet.id : null,
     petName: parsed.petName,
     breed: parsed.breed || (matchedPet ? matchedPet.breed || "" : ""),
@@ -1773,7 +1779,6 @@ function calendarImportModal() {
 }
 
 function importRow(c, i) {
-  const when = new Date(c.start);
   return `
   <div class="card pad imp-row">
     <div class="row" style="justify-content:space-between; align-items:center; gap:10px">
@@ -1781,8 +1786,9 @@ function importRow(c, i) {
         <input type="checkbox" class="imp-row-check" id="imp-check-${i}" checked>
         <input id="imp-name-${i}" value="${esc(c.petName)}" placeholder="Pet name" style="flex:1">
       </label>
-      <div class="faint" style="font-size:12px; white-space:nowrap">${fmtDate(when)} ${fmtTime(when)}</div>
+      <input id="imp-start-${i}" type="datetime-local" value="${toLocalInput(c.start)}" style="width:auto">
     </div>
+    ${c.allDay ? `<div class="faint" style="font-size:11px; color:#a8710a; margin-top:4px">⚠ This was an all-day event on Calendar — no time was set, so 10:00 was guessed. Check it.</div>` : ""}
     <div class="field-row" style="margin-top:8px">
       <input id="imp-breed-${i}" value="${esc(c.breed)}" placeholder="Breed">
       <select id="imp-groomer-${i}">
@@ -1846,6 +1852,9 @@ function renderImportReview(candidates, totalFetched) {
       const c = candidates[i];
       const petName = $(`#imp-name-${i}`).value.trim();
       if (!petName) continue;
+      const startVal = $(`#imp-start-${i}`).value;
+      if (!startVal) continue;
+      const startIso = fromLocalInput(startVal);
       const breed = $(`#imp-breed-${i}`).value.trim();
       const groomerVal = $(`#imp-groomer-${i}`).value;
       const groomerId = groomerVal === "none" || groomerVal === "" ? null : groomerVal;
@@ -1858,7 +1867,7 @@ function renderImportReview(candidates, totalFetched) {
         const each = Math.round((totalHours / services.length) * 2) / 2 || 1;
         services.forEach((s) => { serviceHours[s] = each; });
       }
-      const isPast = new Date(c.start) < new Date();
+      const isPast = new Date(startIso) < new Date();
       const rec = {
         id: DB.uid("bk"),
         createdAt: Date.now(),
@@ -1866,7 +1875,7 @@ function renderImportReview(candidates, totalFetched) {
         petName,
         breed,
         groomerId,
-        start: c.start,
+        start: startIso,
         recurrence: "none",
         recurrenceUntil: null,
         services,
@@ -1874,9 +1883,12 @@ function renderImportReview(candidates, totalFetched) {
         totalCost: costVal === "" ? null : Number(costVal),
         notes,
         calendarEventId: c.eventId,
-        calendarDirty: false, // already matches what's on Calendar — nothing to push back
+        // All-day events had no real time — once given one here, push it back so the Calendar
+        // event itself becomes a proper timed event instead of staying a vague all-day block.
+        // Already-timed events already match what's on Calendar, so leave those alone.
+        calendarDirty: c.allDay,
         status: isPast ? "completed" : "pending",
-        completedAt: isPast ? new Date(c.start).getTime() : null,
+        completedAt: isPast ? new Date(startIso).getTime() : null,
       };
       await DB.put("bookings", rec);
       upsertLocal("bookings", rec);
