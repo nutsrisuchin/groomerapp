@@ -1430,9 +1430,12 @@ function bookingModal(booking, prefillPet) {
     </div>
 
     <div class="field"><label>Notes</label><textarea id="b-notes" placeholder="Anything the groomer should know…">${esc(b.notes || "")}</textarea></div>
-    <div class="row" style="justify-content:flex-end; margin-top:8px">
-      <button class="btn" data-close-modal>Cancel</button>
-      <button class="btn primary" id="save-booking">${booking ? "Save" : "Create booking"}</button>
+    <div class="${booking ? "spread" : "row"}" style="margin-top:8px; flex-wrap:wrap; row-gap:10px; ${booking ? "" : "justify-content:flex-end"}">
+      ${booking ? `<button class="btn danger" id="delete-booking-btn">🗑 Delete</button>` : ""}
+      <div class="row" style="flex-wrap:wrap; row-gap:10px">
+        <button class="btn" data-close-modal>Cancel</button>
+        <button class="btn primary" id="save-booking">${booking ? "Save" : "Create booking"}</button>
+      </div>
     </div>`);
 
   const avatarEl = $("#bk-avatar");
@@ -1561,6 +1564,9 @@ function bookingModal(booking, prefillPet) {
 
   paintAvatar(); paintStatus();
   if (matchedPet) prefillHoursFromPet(); else updateTotal();
+
+  const deleteBtn = $("#delete-booking-btn");
+  if (deleteBtn) deleteBtn.onclick = async () => { closeModal(); await handleAction("del-booking", { id: b.id }); };
 
   $("#save-booking").onclick = async () => {
     const petName = petInput.value.trim();
