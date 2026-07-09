@@ -80,6 +80,7 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 }
 .brand{display:flex; align-items:center; gap:10px; cursor:pointer; user-select:none}
 .brand-mark{font-size:26px}
+.brand-logo{height:52px; width:auto; object-fit:contain; display:block}
 .brand-name{font-weight:800; font-size:18px; line-height:1; display:flex; flex-direction:column; gap:2px}
 .brand-name small{font-weight:600; font-size:11px; color:var(--ink-faint); letter-spacing:.06em; text-transform:uppercase}
 .topnav{display:flex; gap:4px; background:var(--surface-2); padding:4px; border-radius:12px}

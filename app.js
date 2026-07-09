@@ -828,10 +828,8 @@ function viewAdmins() {
       </div>`;
     }).join("") || emptyInline("No additional people yet.")}
     <div class="help" style="margin-top:10px">
-      Forgot someone's PIN? Everyone can change their own PIN from the <strong>Change PIN</strong>
-      button next to Log out. To reset <em>someone else's</em> PIN, Firebase doesn't allow that
-      from inside the app — go to Firebase Console → Authentication → Users → find their email
-      (shown above) → Reset password.
+      Forgot someone's PIN? Firebase doesn't allow changing it from inside the app — go to
+      Firebase Console → Authentication → Users → find their email (shown above) → Reset password.
     </div>
   </div>
 
@@ -2137,47 +2135,6 @@ function adminModal() {
   };
 }
 
-// Self-service PIN change for whoever is currently signed in — App Owner, Admin, or
-// Groomer alike. Firebase can only ever change the *signed-in* user's own password from
-// the client SDK, never someone else's — resetting another person's PIN has to happen in
-// the Firebase Console (see the note on the Admins page).
-function changePinModal() {
-  openModal(`
-    <h2>Change my PIN</h2>
-    <div class="muted" style="margin-bottom:16px">Signed in as ${esc(currentAdminName())}.</div>
-    <div class="field"><label>Current PIN</label><input id="cp-current" type="password" inputmode="numeric" placeholder="Your current PIN" autocomplete="current-password"></div>
-    <div class="field"><label>New PIN</label><input id="cp-new" type="password" inputmode="numeric" placeholder="6+ characters" autocomplete="new-password"></div>
-    <div class="field"><label>Confirm new PIN</label><input id="cp-new2" type="password" inputmode="numeric" placeholder="Repeat the new PIN" autocomplete="new-password"></div>
-    <div class="help" id="cp-error" style="color:var(--danger); font-weight:600"></div>
-    <div class="row" style="justify-content:flex-end; margin-top:8px">
-      <button class="btn" data-close-modal>Cancel</button>
-      <button class="btn primary" id="save-pin">Change PIN</button>
-    </div>`);
-
-  $("#save-pin").onclick = async () => {
-    const current = $("#cp-current").value;
-    const next = $("#cp-new").value;
-    const next2 = $("#cp-new2").value;
-    const errEl = $("#cp-error");
-    errEl.textContent = "";
-    if (!current) { errEl.textContent = "Please enter your current PIN."; return; }
-    if (next.length < 6) { errEl.textContent = "New PIN must be at least 6 characters."; return; }
-    if (next !== next2) { errEl.textContent = "New PINs don't match."; return; }
-
-    const btn = $("#save-pin");
-    btn.disabled = true; btn.textContent = "Changing…";
-    try {
-      await DB.changeMyPin(current, next);
-      closeModal(); toast("PIN changed");
-    } catch (err) {
-      errEl.textContent = ["auth/wrong-password", "auth/invalid-credential"].includes(err.code)
-        ? "That's not your current PIN."
-        : `Couldn't change your PIN (${err.code || err.message}).`;
-      btn.disabled = false; btn.textContent = "Change PIN";
-    }
-  };
-}
-
 /* ===================================================================
    EVENT BINDING
 =================================================================== */
@@ -2439,7 +2396,6 @@ $("#login-form").addEventListener("submit", async (e) => {
 });
 
 $("#logout-btn").addEventListener("click", () => DB.logout());
-$("#change-pin-btn").addEventListener("click", () => changePinModal());
 
 // Keeps the Calendar tab's badge and the banner live across renewals.
 GCal.onStatusChange((connected) => {

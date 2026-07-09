@@ -98,12 +98,8 @@ there revokes their data access immediately; changing their role dropdown takes 
 their next page load (or immediately, if they're active and something re-renders). Note:
 removing someone doesn't delete their underlying Firebase login — for that, go to Firebase
 Console → Authentication → Users and delete it there too (optional; without the Firestore
-listing they can't reach any data regardless).
-
-Anyone signed in — App Owner, Admin, or Groomer — can change their own PIN from the
-**Change PIN** button next to Log out. Firebase's client SDK can only ever change the
-*signed-in* user's own password, never someone else's, so there's no in-app way to reset a
-different person's forgotten PIN — that has to happen in the Firebase Console:
+listing they can't reach any data regardless). There's no in-app way to change anyone's PIN
+(your own included) — Firebase's client SDK only allows that from the Firebase Console:
 Authentication → Users → find their email (shown on the Admins page) → Reset password.
 
 The **Role access** panel on the same page (App Owner only) sets which nav sections the
