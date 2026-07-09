@@ -95,13 +95,13 @@
   // admin out, by spinning up a throwaway secondary Firebase app instance —
   // the standard client-side workaround since the SDK only ever manages
   // "the current user" on the primary app.
-  api.createAdmin = async function ({ name, email, pin }) {
+  api.createAdmin = async function ({ name, email, pin, role }) {
     const secondary = firebase.initializeApp(FIREBASE_CONFIG, "secondary-" + Date.now());
     try {
       const cred = await secondary.auth().createUserWithEmailAndPassword(email, pin);
       const uid = cred.user.uid;
       await secondary.auth().signOut();
-      const rec = { id: uid, uid, name, email, createdAt: Date.now() };
+      const rec = { id: uid, uid, name, email, role: role || "admin", createdAt: Date.now() };
       await col("admins").doc(uid).set(rec);
       return rec;
     } finally {

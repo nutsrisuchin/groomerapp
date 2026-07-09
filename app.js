@@ -90,6 +90,57 @@ const GROOMER_COLORS = [
 const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], scheduleDate: "", scheduleHiddenGroomers: [], financialMonth: "", search: { name: "", breed: "" } };
 const getCalendarId = () => (state.settings.find((s) => s.id === "calendar") || {}).calendarId || "";
 const getCustomBreeds = () => (state.settings.find((s) => s.id === "breeds") || {}).list || [];
+
+/* ---------- roles & access ----------
+   Three levels: App Owner (the fixed bootstrap account, SHOP_LOGIN_EMAIL — always full
+   access, not stored in "admins"), Admin (full add/edit/delete within whichever sections
+   they can see), Groomer (add/edit within their sections, never delete). Only the App Owner
+   can add/remove people or change the per-role section list — enforced here in the UI, and
+   again in Firestore Security Rules for delete operations (see README's rules block) so it
+   holds even against a direct API call, not just a hidden button. */
+const ALL_SECTIONS = [
+  { key: "home", label: "Home" },
+  { key: "pets", label: "Pets" },
+  { key: "bookings", label: "Bookings" },
+  { key: "schedule", label: "Schedule" },
+  { key: "financial", label: "Financial" },
+  { key: "groomers", label: "Groomers" },
+  { key: "calendar", label: "Calendar" },
+];
+// "Admins" is deliberately not a selectable section anywhere — that page is App Owner-only,
+// full stop, regardless of what a role's section list contains.
+const DEFAULT_ROLE_SECTIONS = {
+  admin: ALL_SECTIONS.map((s) => s.key),
+  groomer: ["home", "pets", "bookings", "schedule"],
+};
+const isOwnerSession = () => DB.currentEmail() === SHOP_LOGIN_EMAIL;
+const currentAdminDoc = () => state.admins.find((a) => a.uid === DB.currentUid());
+// Missing `role` (an admin created before roles existed) defaults to "admin" — preserves
+// full access for everyone who already had it, no manual migration needed.
+function currentRole() {
+  if (isOwnerSession()) return "owner";
+  const a = currentAdminDoc();
+  return (a && a.role) || "admin";
+}
+function roleSectionsConfig() {
+  const rec = state.settings.find((s) => s.id === "roles");
+  return {
+    admin: (rec && rec.admin && rec.admin.length) ? rec.admin : DEFAULT_ROLE_SECTIONS.admin,
+    groomer: (rec && rec.groomer && rec.groomer.length) ? rec.groomer : DEFAULT_ROLE_SECTIONS.groomer,
+  };
+}
+// The nav/section keys this session may view. "home" is always included — it's the landing
+// page every session needs, regardless of role configuration.
+function allowedSections() {
+  if (isOwnerSession()) return [...ALL_SECTIONS.map((s) => s.key), "admins"];
+  const cfg = roleSectionsConfig();
+  const sections = cfg[currentRole()] || [];
+  return sections.includes("home") ? sections : ["home", ...sections];
+}
+// "pet" (a single pet's detail page) isn't its own nav section — it's gated by "pets".
+function sectionKeyForView(view) { return view === "pet" ? "pets" : view; }
+function canAccessView(view) { return isOwnerSession() || allowedSections().includes(sectionKeyForView(view)); }
+const canDelete = () => isOwnerSession() || currentRole() === "admin";
 // Static per-species list plus any breed staff have typed in before (shared across
 // species — a small imprecision, but keeps the "remembered breeds" data model simple),
 // deduped case-insensitively.
@@ -174,16 +225,17 @@ function toast(msg) {
   clearTimeout(t._t); t._t = setTimeout(() => (t.hidden = true), 2200);
 }
 
-// Derives the Firebase Auth login email an admin's name maps to. "Owner" always
-// maps to the bootstrap account set up manually in the Firebase Console.
+// Derives the Firebase Auth login email an admin's name maps to. "App Owner" (or the older
+// "Owner", kept as an alias so nothing already muscle-memorized breaks) always maps to the
+// bootstrap account set up manually in the Firebase Console.
 function emailForName(name) {
   const n = name.trim().toLowerCase();
-  if (n === "owner") return SHOP_LOGIN_EMAIL;
+  if (n === "owner" || n === "app owner") return SHOP_LOGIN_EMAIL;
   const slug = n.replace(/[^a-z0-9]+/g, "-").replace(/(^-+|-+$)/g, "");
   return `${slug}@pawfect.local`;
 }
 function currentAdminName() {
-  if (DB.currentEmail() === SHOP_LOGIN_EMAIL) return "Owner";
+  if (DB.currentEmail() === SHOP_LOGIN_EMAIL) return "App Owner";
   const a = state.admins.find((x) => x.uid === DB.currentUid());
   return a ? a.name : "Someone";
 }
@@ -434,7 +486,15 @@ function removeLocal(name, id) {
 }
 
 function render() {
-  $$(".nav-btn").forEach((b) => b.classList.toggle("active", b.dataset.nav === state.view));
+  // Self-heals if a role's access changed while this session was sitting on a page it can
+  // no longer see (e.g. the App Owner just unchecked a section for their role, live).
+  if (!canAccessView(state.view)) { state.view = "home"; state.petId = null; }
+  const allowed = allowedSections();
+  $$(".nav-btn").forEach((b) => {
+    const key = b.dataset.nav;
+    b.hidden = key !== "home" && !allowed.includes(key);
+    b.classList.toggle("active", key === state.view);
+  });
   const v = $("#view");
   if (state.view === "home") v.innerHTML = viewHome();
   else if (state.view === "pets") v.innerHTML = viewPets();
@@ -449,7 +509,10 @@ function render() {
   window.scrollTo({ top: 0 });
 }
 
-function go(view, petId = null) { state.view = view; state.petId = petId; render(); }
+function go(view, petId = null) {
+  if (!canAccessView(view)) { toast("You don't have access to that section"); return; }
+  state.view = view; state.petId = petId; render();
+}
 
 /* ---------- HOME ---------- */
 function viewHome() {
@@ -595,7 +658,7 @@ function viewPetDetail() {
             <div class="row spread">
               <div><strong>${(h.services || []).map(esc).join(", ") || "Service"}</strong>
                 <span class="groomer-tag" style="margin-left:8px"><span class="dot" style="background:${groomerColor(h.groomerId)}"></span>${esc(groomerName(h.groomerId))}</span></div>
-              <button class="icon-btn" data-action="del-history" data-id="${p.id}" data-idx="${i}" title="Delete">🗑</button>
+              ${canDelete() ? `<button class="icon-btn" data-action="del-history" data-id="${p.id}" data-idx="${i}" title="Delete">🗑</button>` : ""}
             </div>
             ${h.notes ? `<div class="muted" style="font-size:13px; margin-top:4px">${esc(h.notes)}</div>` : ""}
           </div>
@@ -695,7 +758,7 @@ function bookingRow(b, opts = {}) {
         <button class="btn sm danger" data-action="cancel-booking" data-id="${b.id}">✕ Cancel</button>` : ""}
       <button class="btn sm" data-action="edit-booking" data-id="${b.id}">Edit</button>
       <button class="icon-btn" data-action="copy-confirm" data-id="${b.id}" title="Copy confirmation message">📋</button>
-      <button class="icon-btn" data-action="del-booking" data-id="${b.id}" title="Delete">🗑</button>
+      ${canDelete() ? `<button class="icon-btn" data-action="del-booking" data-id="${b.id}" title="Delete">🗑</button>` : ""}
     </div>
   </div>`;
 }
@@ -724,7 +787,7 @@ function viewGroomers() {
         <div class="grow"><strong>${esc(g.name)}</strong>
           <div class="faint" style="font-size:12px">${count} booking${count === 1 ? "" : "s"}</div></div>
         <button class="btn sm" data-action="edit-groomer" data-id="${g.id}">Edit</button>
-        <button class="btn sm danger" data-action="del-groomer" data-id="${g.id}">Remove</button>
+        ${canDelete() ? `<button class="btn sm danger" data-action="del-groomer" data-id="${g.id}">Remove</button>` : ""}
       </div>`;
     }).join("") || emptyInline("No groomers yet.")}
   </div>`;
@@ -732,26 +795,59 @@ function viewGroomers() {
 
 /* ---------- ADMINS ---------- */
 function viewAdmins() {
+  // render() already redirects anyone who isn't the App Owner away from this view before it
+  // ever gets called — this is just defense in depth against a future bug elsewhere.
+  if (!isOwnerSession()) return `<div class="page-head"><h1>Admins</h1></div><div class="card pad">Only the App Owner can manage admins.</div>`;
   const myUid = DB.currentUid();
+  const cfg = roleSectionsConfig();
+  const roleLabel = (r) => (r === "groomer" ? "Groomer" : "Admin");
   return `
   <div class="page-head">
     <h1>Admins</h1>
-    <button class="btn primary" data-action="new-admin">＋ Add admin</button>
+    <button class="btn primary" data-action="new-admin">＋ Add person</button>
   </div>
-  <div class="card pad">
-    <div class="muted" style="margin-bottom:6px">Each admin signs in with their own name + PIN. Removing an admin here revokes their access immediately.</div>
+  <div class="card pad" style="margin-bottom:16px">
+    <div class="muted" style="margin-bottom:6px">Each person signs in with their own name + PIN. Only the App Owner can add, remove, or change someone's role.</div>
     <div class="groomer-row">
       <span class="swatch" style="background:var(--brand)"></span>
-      <div class="grow"><strong>Owner</strong>${DB.currentEmail() === SHOP_LOGIN_EMAIL ? ' <span class="chip">you</span>' : ""}
-        <div class="faint" style="font-size:12px">Master account, set up in the Firebase Console</div></div>
+      <div class="grow"><strong>App Owner</strong> <span class="chip">you</span>
+        <div class="faint" style="font-size:12px">Master account, set up in the Firebase Console — always has full access to every section</div></div>
     </div>
-    ${state.admins.map((a) => `
+    ${state.admins.map((a) => {
+      const role = a.role || "admin";
+      return `
       <div class="groomer-row">
         <span class="swatch" style="background:var(--brand)"></span>
         <div class="grow"><strong>${esc(a.name)}</strong>${a.uid === myUid ? ' <span class="chip">you</span>' : ""}
           <div class="faint" style="font-size:12px">${esc(a.email)}</div></div>
+        <select data-action="set-role" data-id="${a.uid}" style="width:auto">
+          <option value="admin" ${role === "admin" ? "selected" : ""}>Admin</option>
+          <option value="groomer" ${role === "groomer" ? "selected" : ""}>Groomer</option>
+        </select>
         <button class="btn sm danger" data-action="del-admin" data-id="${a.uid}" ${a.uid === myUid ? "disabled" : ""}>Remove</button>
-      </div>`).join("") || emptyInline("No additional admins yet.")}
+      </div>`;
+    }).join("") || emptyInline("No additional people yet.")}
+  </div>
+
+  <div class="card pad">
+    <h3 class="section-title">Role access</h3>
+    <div class="muted" style="margin-bottom:14px">
+      Which sections each role can see. Admin can add, edit, and delete within them; Groomer
+      can add and edit but never delete. The Admins section itself is always App Owner-only,
+      regardless of what's checked below.
+    </div>
+    ${["admin", "groomer"].map((role) => `
+      <div style="margin-bottom:16px">
+        <div style="font-weight:700; margin-bottom:8px">${roleLabel(role)}</div>
+        <div class="row" style="flex-wrap:wrap; gap:14px">
+          ${ALL_SECTIONS.map((s) => `
+            <label class="row" style="gap:6px; font-size:13px">
+              <input type="checkbox" class="role-section" data-role="${role}" data-section="${s.key}" ${cfg[role].includes(s.key) ? "checked" : ""}>
+              ${esc(s.label)}
+            </label>`).join("")}
+        </div>
+      </div>`).join("")}
+    <button class="btn primary sm" data-action="save-roles">Save role access</button>
   </div>`;
 }
 
@@ -1246,7 +1342,7 @@ function petEditorModal(pet) {
       <div class="field"><label>💈 Styling</label><input id="f-styling" type="number" min="0" step="0.25" value="${esc(t.styling ?? "")}"></div>
     </div>
     <div class="row spread" style="margin-top:12px">
-      ${pet ? `<button class="btn danger" data-action="del-pet" data-id="${p.id}">Delete pet</button>` : "<span></span>"}
+      ${pet && canDelete() ? `<button class="btn danger" data-action="del-pet" data-id="${p.id}">Delete pet</button>` : "<span></span>"}
       <div class="row"><button class="btn" data-close-modal>Cancel</button>
       <button class="btn primary" id="save-pet">Save</button></div>
     </div>`);
@@ -1430,8 +1526,8 @@ function bookingModal(booking, prefillPet) {
     </div>
 
     <div class="field"><label>Notes</label><textarea id="b-notes" placeholder="Anything the groomer should know…">${esc(b.notes || "")}</textarea></div>
-    <div class="${booking ? "spread" : "row"}" style="margin-top:8px; flex-wrap:wrap; row-gap:10px; ${booking ? "" : "justify-content:flex-end"}">
-      ${booking ? `<button class="btn danger" id="delete-booking-btn">🗑 Delete</button>` : ""}
+    <div class="${booking && canDelete() ? "spread" : "row"}" style="margin-top:8px; flex-wrap:wrap; row-gap:10px; ${booking && canDelete() ? "" : "justify-content:flex-end"}">
+      ${booking && canDelete() ? `<button class="btn danger" id="delete-booking-btn">🗑 Delete</button>` : ""}
       <div class="row" style="flex-wrap:wrap; row-gap:10px">
         <button class="btn" data-close-modal>Cancel</button>
         <button class="btn primary" id="save-booking">${booking ? "Save" : "Create booking"}</button>
@@ -1991,39 +2087,46 @@ function groomerModal(groomer) {
 /* ---------- Admin editor (create only — see viewAdmins for remove) ---------- */
 function adminModal() {
   openModal(`
-    <h2>Add admin</h2>
+    <h2>Add person</h2>
     <div class="muted" style="margin-bottom:16px">They'll sign in with this name and PIN from now on.</div>
     <div class="field"><label>Name</label><input id="a-name" placeholder="e.g. Nina" autocomplete="off"></div>
+    <div class="field"><label>Role</label>
+      <select id="a-role">
+        <option value="groomer" selected>Groomer — can add/edit within their sections, never delete</option>
+        <option value="admin">Admin — full add/edit/delete within their sections</option>
+      </select>
+    </div>
     <div class="field"><label>PIN</label><input id="a-pin" type="password" inputmode="numeric" placeholder="6+ characters" autocomplete="new-password"></div>
     <div class="field"><label>Confirm PIN</label><input id="a-pin2" type="password" inputmode="numeric" placeholder="Repeat the PIN" autocomplete="new-password"></div>
     <div class="help" id="admin-error" style="color:var(--danger); font-weight:600"></div>
     <div class="row" style="justify-content:flex-end; margin-top:8px">
       <button class="btn" data-close-modal>Cancel</button>
-      <button class="btn primary" id="save-admin">Add admin</button>
+      <button class="btn primary" id="save-admin">Add person</button>
     </div>`);
 
   $("#save-admin").onclick = async () => {
     const name = $("#a-name").value.trim();
+    const role = $("#a-role").value;
     const pin = $("#a-pin").value;
     const pin2 = $("#a-pin2").value;
     const errEl = $("#admin-error");
     errEl.textContent = "";
     if (!name) { errEl.textContent = "Please enter a name."; return; }
-    if (name.trim().toLowerCase() === "owner") { errEl.textContent = "\"Owner\" is reserved for the master account."; return; }
+    if (["owner", "app owner"].includes(name.trim().toLowerCase())) { errEl.textContent = "\"App Owner\" is reserved for the master account."; return; }
     if (pin.length < 6) { errEl.textContent = "PIN must be at least 6 characters."; return; }
     if (pin !== pin2) { errEl.textContent = "PINs don't match."; return; }
 
     const btn = $("#save-admin");
     btn.disabled = true; btn.textContent = "Adding…";
     try {
-      const rec = await DB.createAdmin({ name, email: emailForName(name), pin });
+      const rec = await DB.createAdmin({ name, email: emailForName(name), pin, role });
       upsertLocal("admins", rec);
-      closeModal(); toast("Admin added"); render();
+      closeModal(); toast("Person added"); render();
     } catch (err) {
       errEl.textContent = err.code === "auth/email-already-in-use"
         ? "That name is already taken — try a different one."
-        : `Couldn't add admin (${err.code || err.message}).`;
-      btn.disabled = false; btn.textContent = "Add admin";
+        : `Couldn't add that person (${err.code || err.message}).`;
+      btn.disabled = false; btn.textContent = "Add person";
     }
   };
 }
@@ -2058,7 +2161,12 @@ function bindView() {
   if (finMonth) finMonth.onchange = () => { if (finMonth.value) { state.financialMonth = finMonth.value; render(); } };
 
   // actions
-  $$("[data-action]").forEach((el) => el.onclick = () => handleAction(el.dataset.action, el.dataset));
+  $$("[data-action]").forEach((el) => {
+    // A <select> reports its choice via "change", not "click" — and el.dataset alone
+    // doesn't carry the chosen value, so pass it through separately.
+    const fire = () => handleAction(el.dataset.action, el.tagName === "SELECT" ? { ...el.dataset, value: el.value } : el.dataset);
+    if (el.tagName === "SELECT") el.onchange = fire; else el.onclick = fire;
+  });
 }
 
 // Re-render only home so the search inputs keep focus/caret
@@ -2144,12 +2252,30 @@ async function handleAction(action, data) {
         if (removed) logActivity("groomer", "deleted", removed.name);
       }
     } break;
-    case "new-admin": adminModal(); break;
+    case "new-admin": if (isOwnerSession()) adminModal(); break;
     case "del-admin":
+      if (!isOwnerSession()) break;
       if (data.id === DB.currentUid()) { toast("You can't remove yourself while signed in."); break; }
-      if (confirm("Remove this admin? They'll immediately lose access.")) {
-        await DB.removeAdmin(data.id); removeLocal("admins", data.id); toast("Admin removed"); render();
+      if (confirm("Remove this person? They'll immediately lose access.")) {
+        await DB.removeAdmin(data.id); removeLocal("admins", data.id); toast("Removed"); render();
       } break;
+    case "set-role": {
+      if (!isOwnerSession()) break;
+      const a = state.admins.find((x) => x.uid === data.id);
+      if (!a) break;
+      const rec = { ...a, role: data.value };
+      await DB.put("admins", rec); upsertLocal("admins", rec);
+      toast(`${a.name} is now ${data.value === "groomer" ? "a Groomer" : "an Admin"}`);
+      render();
+    } break;
+    case "save-roles": {
+      if (!isOwnerSession()) break;
+      const admin = $$('.role-section[data-role="admin"]').filter((cb) => cb.checked).map((cb) => cb.dataset.section);
+      const groomer = $$('.role-section[data-role="groomer"]').filter((cb) => cb.checked).map((cb) => cb.dataset.section);
+      const rec = { id: "roles", admin, groomer, updatedAt: Date.now() };
+      await DB.put("settings", rec); upsertLocal("settings", rec);
+      toast("Role access saved"); render();
+    } break;
     case "gcal-connect":
       try { await GCal.connect(); toast("Connected to Google Calendar"); render(); }
       catch (err) { toast("Couldn't connect — check your pop-up blocker and try again."); }

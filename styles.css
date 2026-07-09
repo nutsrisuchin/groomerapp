@@ -329,8 +329,12 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 @media(max-width:640px){ .month-cell{min-height:64px} .month-pill{display:none} .month-more{display:none} }
 
 /* ---------- Groomer manager ---------- */
-.groomer-row{display:flex; align-items:center; gap:12px; padding:12px 0; border-bottom:1px solid var(--line)}
+.groomer-row{display:flex; align-items:center; gap:12px; padding:12px 0; border-bottom:1px solid var(--line); flex-wrap:wrap; row-gap:8px}
 .groomer-row:last-child{border-bottom:0}
+.groomer-row select{
+  padding:8px 10px; border:1px solid var(--line); border-radius:var(--radius-sm);
+  background:var(--surface); color:var(--ink); font-size:16px;
+}
 .swatch{width:26px; height:26px; border-radius:8px; flex:none; border:1px solid rgba(0,0,0,.06)}
 .color-pick{display:flex; gap:8px; flex-wrap:wrap}
 .color-opt{width:30px; height:30px; border-radius:9px; border:2px solid transparent; cursor:pointer}

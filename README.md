@@ -21,39 +21,89 @@ The app needs its own free Firebase project to store shared data. About 10 minut
    rules_version = '2';
    service cloud.firestore {
      match /databases/{database}/documents {
-       function isAdmin() {
-         return request.auth != null &&
-           (request.auth.token.email == 'admin@groomingdale.com' ||
-            exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+       function isOwner() {
+         return request.auth != null && request.auth.token.email == 'admin@groomingdale.com';
        }
-       match /{document=**} {
-         allow read, write: if isAdmin();
+       function myAdmin() {
+         return get(/databases/$(database)/documents/admins/$(request.auth.uid)).data;
+       }
+       function isStaff() {
+         return request.auth != null &&
+           (isOwner() || exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+       }
+       // Admins created before roles existed have no `role` field — treat that as "admin"
+       // so nobody who already had full access loses it.
+       function myRole() {
+         return isOwner() ? 'owner' : (('role' in myAdmin()) ? myAdmin().role : 'admin');
+       }
+       function canDelete() { return isOwner() || myRole() == 'admin'; }
+
+       match /admins/{id} {
+         allow read: if isStaff();
+         allow create, update, delete: if isOwner();
+       }
+       match /pets/{id} {
+         allow read, create, update: if isStaff();
+         allow delete: if canDelete();
+       }
+       match /groomers/{id} {
+         allow read, create, update: if isStaff();
+         allow delete: if canDelete();
+       }
+       match /bookings/{id} {
+         allow read, create, update: if isStaff();
+         allow delete: if canDelete();
+       }
+       match /activity/{id} {
+         allow read, create: if isStaff();
+       }
+       match /calendarTombstones/{id} {
+         allow read, write: if isStaff(); // background Calendar-sync cleanup, not a role-gated action
+       }
+       match /settings/roles {
+         allow read: if isStaff();
+         allow write: if isOwner();
+       }
+       match /settings/{id} {
+         allow read: if isStaff();
+         allow write: if isStaff() && id != 'roles';
        }
      }
    }
    ```
-   *Publish.* This means: only the Owner account, or someone listed in the app's own
-   **Admins** section, can read or write any data.
+   *Publish.* This means: only the App Owner account, or someone listed in the app's own
+   **Admins** section, can read or write any data — and within that, only the App Owner can
+   add/remove people or change role access, and only the App Owner or someone with the Admin
+   role can delete a pet, booking, or groomer (the Groomer role can add and edit, never delete).
 6. **Turn on PIN logins** — left sidebar → *Build → Authentication* → *Get started* →
    under *Sign-in method*, enable **Email/Password**.
-7. **Create the Owner account** — Authentication → *Users* tab → *Add user* →
+7. **Create the App Owner account** — Authentication → *Users* tab → *Add user* →
    - Email: `admin@groomingdale.com` (must match `SHOP_LOGIN_EMAIL` in `firebase-config.js` exactly)
-   - Password: **this is the Owner PIN** — pick something 6+ characters (e.g. `482917`).
+   - Password: **this is the App Owner PIN** — pick something 6+ characters (e.g. `482917`).
 
-   This is the one account you set up by hand — it always has access, even if the
-   `admins` collection is empty, so you can't get locked out. On the app's login screen,
-   sign in with name `Owner` and this PIN, then use the **Admins** section to add
-   everyone else (Mint, Mikka, Boat, etc.), each with their own name and PIN.
+   This is the one account you set up by hand — it always has full access to every section,
+   even if the `admins` collection is empty, so you can't get locked out. On the app's login
+   screen, sign in with name `App Owner` (or the older `Owner`, still accepted) and this PIN,
+   then use the **Admins** section to add everyone else, each as either an **Admin** (full
+   add/edit/delete within their sections) or a **Groomer** (add/edit, never delete), with
+   their own name and PIN.
 
 That's it — open `index.html` (locally or once deployed) and log in.
 
-### Managing admins day-to-day
-Once signed in as Owner (or any admin), open **Admins** → *＋ Add admin* → enter a name
-and a PIN (6+ characters) → that person can now log in with that name + PIN from any device.
-Removing an admin there revokes their data access immediately. Note: it doesn't delete
-their underlying Firebase login — for that, go to Firebase Console → Authentication →
-Users and delete it there too (optional; without the Firestore listing they can't reach
-any data regardless).
+### Managing people day-to-day
+Once signed in as App Owner, open **Admins** → *＋ Add person* → pick a role (Admin or
+Groomer), enter a name and a PIN (6+ characters) → that person can now log in with that name
++ PIN from any device, and only sees the nav sections their role is allowed. Removing someone
+there revokes their data access immediately; changing their role dropdown takes effect on
+their next page load (or immediately, if they're active and something re-renders). Note:
+removing someone doesn't delete their underlying Firebase login — for that, go to Firebase
+Console → Authentication → Users and delete it there too (optional; without the Firestore
+listing they can't reach any data regardless).
+
+The **Role access** panel on the same page (App Owner only) sets which nav sections the
+Admin and Groomer roles can see — the Admins section itself is never selectable there; it's
+always App Owner-only. New installs default Admin to every section and Groomer to
+Home/Pets/Bookings/Schedule — adjust and *Save role access* to fit your shop.
 
 ## Hosting it for free (GitHub Pages)
 
@@ -108,7 +158,10 @@ those arrays directly and redeploying. Estimates only appear once a pet's weight
 The breed suggestion list also depends on species — `DOG_BREEDS` / `CAT_BREEDS` (20 each)
 in `app.js`. Typing anything not on the list still works fine and gets remembered as a
 suggestion for next time (shared across both species, for simplicity).
-- **Admins** — add/remove people who can log into the app, each with their own name + PIN.
+- **Admins** (App Owner only) — add/remove people who can log into the app, each with their
+  own name + PIN and a role (**Admin**: full add/edit/delete within their sections; **Groomer**:
+  add/edit, never delete), plus a **Role access** panel setting which nav sections each role
+  can see.
 - **Calendar** — connect a Google account and set the shared Calendar ID that bookings sync to.
 - **Schedule** — Day / Week / Month views, built entirely from the app's own booking data
   (instant, always up to date regardless of Google Calendar connection status):
