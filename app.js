@@ -1728,6 +1728,7 @@ function calendarImportModal() {
   const calendarId = getCalendarId();
   if (!calendarId) { toast("Save a Calendar ID first"); return; }
   const defaultFrom = addMonthsKey(todayKey(), -24);
+  const defaultTo = addMonthsKey(todayKey(), 24);
   openModal(`
     <h2>Import bookings from Calendar</h2>
     <div class="muted" style="margin-bottom:14px">
@@ -1737,8 +1738,9 @@ function calendarImportModal() {
     </div>
     <div class="field-row">
       <div class="field"><label>From</label><input id="imp-from" type="date" value="${defaultFrom}"></div>
-      <div class="field"><label>To</label><input id="imp-to" type="date" value="${todayKey()}"></div>
+      <div class="field"><label>To</label><input id="imp-to" type="date" value="${defaultTo}"></div>
     </div>
+    <div class="help">Covers both past and upcoming events by default — widen it if some of your bookings fall outside this range.</div>
     <div class="help" id="imp-status"></div>
     <div class="row" style="justify-content:flex-end; margin-top:8px">
       <button class="btn" data-close-modal>Cancel</button>
@@ -1804,9 +1806,14 @@ function renderImportReview(candidates, totalFetched) {
   if (!candidates.length) {
     openModal(`
       <h2>Import bookings from Calendar</h2>
-      <div class="muted">Found ${totalFetched} event${totalFetched === 1 ? "" : "s"} in that range — all
-        ${totalFetched === 1 ? "is" : "are"} already linked to a booking here, or had no usable start
-        time. Nothing new to import.</div>
+      <div class="muted">${totalFetched === 0
+        ? `No events came back for that date range at all. Double-check the <strong>Calendar ID</strong>
+           saved on this tab actually matches the calendar you're looking at in Google Calendar
+           (Settings → that calendar → Integrate calendar → Calendar ID) — a mismatch there returns
+           zero events with no error. Also confirm the range covers the events' actual dates.`
+        : `Found ${totalFetched} event${totalFetched === 1 ? "" : "s"} in that range — all
+           ${totalFetched === 1 ? "is" : "are"} already linked to a booking here, or had no usable start
+           time. Nothing new to import.`}</div>
       <div class="row" style="justify-content:flex-end; margin-top:14px"><button class="btn primary" data-close-modal>Close</button></div>`);
     return;
   }
