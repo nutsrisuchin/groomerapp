@@ -112,5 +112,18 @@
   // Does not delete their underlying Firebase Auth login — see file header.
   api.removeAdmin = (uid) => col("admins").doc(uid).delete();
 
+  // Self-service PIN change for whoever is currently signed in. Firebase requires a
+  // "recent login" for a sensitive change like this, so re-authenticate with the current
+  // PIN first (also doubles as proving they actually know it) before setting the new one.
+  // There is no equivalent for changing *someone else's* PIN from the client SDK — only the
+  // signed-in user's own password can ever be touched this way; resetting another person's
+  // PIN has to happen in the Firebase Console (Authentication -> Users -> Reset password).
+  api.changeMyPin = async function (currentPin, newPin) {
+    const user = auth.currentUser;
+    const cred = firebase.auth.EmailAuthProvider.credential(user.email, currentPin);
+    await user.reauthenticateWithCredential(cred);
+    await user.updatePassword(newPin);
+  };
+
   window.DB = api;
 })();

@@ -100,6 +100,12 @@ removing someone doesn't delete their underlying Firebase login — for that, go
 Console → Authentication → Users and delete it there too (optional; without the Firestore
 listing they can't reach any data regardless).
 
+Anyone signed in — App Owner, Admin, or Groomer — can change their own PIN from the
+**Change PIN** button next to Log out. Firebase's client SDK can only ever change the
+*signed-in* user's own password, never someone else's, so there's no in-app way to reset a
+different person's forgotten PIN — that has to happen in the Firebase Console:
+Authentication → Users → find their email (shown on the Admins page) → Reset password.
+
 The **Role access** panel on the same page (App Owner only) sets which nav sections the
 Admin and Groomer roles can see — the Admins section itself is never selectable there; it's
 always App Owner-only. New installs default Admin to every section and Groomer to

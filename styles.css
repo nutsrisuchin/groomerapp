@@ -68,7 +68,7 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 /* ---------- Top bar ---------- */
 .topbar{
   position:sticky; top:0; z-index:20;
-  display:flex; align-items:center; justify-content:space-between;
+  display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; row-gap:8px;
   gap:16px; padding:12px 24px;
   padding-top:max(12px, env(safe-area-inset-top)); /* clears the notch/status bar in home-screen mode */
   background:rgba(255,255,255,.82); backdrop-filter:blur(10px);
