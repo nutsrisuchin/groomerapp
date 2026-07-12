@@ -283,6 +283,7 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 .gcal-toolbar{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:16px}
 .gcal-title{font-weight:700; font-size:16px; margin-left:6px}
 .sched-mode-select{width:auto; padding:8px 12px; font-weight:600}
+.upcoming-range-select{width:auto; padding:8px 12px; font-weight:600}
 @media(max-width:900px){ .gcal-layout{flex-direction:column} .gcal-sidebar{width:100%; display:flex; flex-wrap:wrap; gap:20px; align-items:flex-start} .mini-cal{flex:1; min-width:220px} .sidebar-groomers{flex:1; min-width:180px} }
 
 /* mini month picker */

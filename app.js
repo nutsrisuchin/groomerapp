@@ -95,7 +95,7 @@ const GROOMER_COLORS = [
 ];
 
 /* ---------- state ---------- */
-const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], scheduleDate: "", scheduleHiddenGroomers: [], financialMonth: "", search: { name: "", breed: "" } };
+const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], scheduleDate: "", scheduleHiddenGroomers: [], financialMonth: "", upcomingRange: "day", search: { name: "", breed: "" } };
 const getCalendarId = () => (state.settings.find((s) => s.id === "calendar") || {}).calendarId || "";
 const getCustomBreeds = () => (state.settings.find((s) => s.id === "breeds") || {}).list || [];
 
@@ -489,6 +489,15 @@ function isPastDue(b) {
   if ((!b.recurrence || b.recurrence === "none") && occ < startOfToday()) return true;
   return false;
 }
+// Restricts an already-upcoming (pending, not-past-due) list to occurrences within N days
+// of today; "all" (or an empty list) is returned as-is.
+function filterByUpcomingRange(upcoming, range) {
+  if (range === "all" || !upcoming.length) return upcoming;
+  const days = range === "week" ? 7 : range === "month" ? 30 : 1;
+  const cutoff = startOfToday();
+  cutoff.setDate(cutoff.getDate() + days);
+  return upcoming.filter((b) => nextOccurrence(b) < cutoff);
+}
 function bookingDurationHours(b) {
   if (!b.serviceHours) return 0;
   const sum = Object.values(b.serviceHours).reduce((a, v) => a + (Number(v) || 0), 0);
@@ -770,6 +779,8 @@ function viewBookings() {
   const pending = state.bookings.filter((b) => !b.status || b.status === "pending");
   const pastDue = pending.filter(isPastDue).sort(byOccurrence);
   const upcoming = pending.filter((b) => !isPastDue(b)).sort(byOccurrence);
+  const upcomingRange = state.upcomingRange || "day";
+  const upcomingShown = filterByUpcomingRange(upcoming, upcomingRange);
   const completed = state.bookings.filter((b) => b.status === "completed").sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0));
   const cancelled = state.bookings.filter((b) => b.status === "cancelled").sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0));
 
@@ -786,9 +797,19 @@ function viewBookings() {
     </div>` : ""}
 
   <div class="card bookings-section" style="margin-bottom:16px">
-    <div class="card pad" style="padding-bottom:0; border:0"><h3 class="section-title">📆 Upcoming Bookings (${upcoming.length})</h3></div>
-    ${upcoming.length ? upcoming.map((b) => bookingRow(b, { showResolveActions: true })).join("")
-      : emptyBlock("📅", "No upcoming bookings", "Create a booking — it's ready to sync to Google Calendar later.", "new-booking", "New booking")}
+    <div class="card pad" style="padding-bottom:0; border:0">
+      <div class="row" style="justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px">
+        <h3 class="section-title">📆 Upcoming Bookings (${upcomingShown.length})</h3>
+        <select class="upcoming-range-select" data-action="set-upcoming-range">
+          <option value="day" ${upcomingRange === "day" ? "selected" : ""}>Next day</option>
+          <option value="week" ${upcomingRange === "week" ? "selected" : ""}>Next week</option>
+          <option value="month" ${upcomingRange === "month" ? "selected" : ""}>Next month</option>
+          <option value="all" ${upcomingRange === "all" ? "selected" : ""}>All upcoming</option>
+        </select>
+      </div>
+    </div>
+    ${upcomingShown.length ? upcomingShown.map((b) => bookingRow(b, { showResolveActions: true })).join("")
+      : emptyBlock("📅", "No upcoming bookings in this range", "Try a wider range above, or create a booking — it's ready to sync to Google Calendar later.", "new-booking", "New booking")}
   </div>
 
   <details class="card bookings-collapsible" style="margin-bottom:16px">
@@ -2518,6 +2539,7 @@ async function handleAction(action, data) {
     case "fin-prev": state.financialMonth = addMonthsToMonthKey(state.financialMonth || todayKey().slice(0, 7), -1); render(); break;
     case "fin-next": state.financialMonth = addMonthsToMonthKey(state.financialMonth || todayKey().slice(0, 7), 1); render(); break;
     case "fin-today": state.financialMonth = todayKey().slice(0, 7); render(); break;
+    case "set-upcoming-range": state.upcomingRange = data.value; render(); break;
     case "clear-search": state.search = { name: "", breed: "" }; render(); break;
     case "go-pets": go("pets"); break;
   }
