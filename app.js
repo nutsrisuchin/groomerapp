@@ -187,31 +187,113 @@ function allKnownBreeds() {
   });
   return out.sort((a, b) => b.length - a.length);
 }
+
+/* ---------- Calendar-import title parsing helpers ----------
+   Real hand-typed Calendar titles drift from the app's own "Name Breed Service Remark"
+   format in predictable ways: shorthand service words ("styling" instead of "Hair
+   Styling"), breeds spelled without a space ("shihtzu"), and multi-word or "&"/"and"-joined
+   pet names. These helpers are additive — none of them touch SERVICES/DOG_BREEDS/CAT_BREEDS/
+   getCustomBreeds(), so the normal booking form is completely unaffected; they only make the
+   one-time import's best-effort parse recognize more of what staff actually typed. */
+
+// Shorthand words that should count as one of the two real services, in addition to the
+// exact labels. Not exhaustive by design — the review step is always there to fix whatever
+// this doesn't catch.
+const SERVICE_SYNONYMS = {
+  "Basic": ["basic", "bath", "shower"],
+  "Hair Styling": ["hair styling", "styling", "style", "groom", "full groom"],
+};
+// serviceCombos()'s multi-service labels, plus every synonym mapped back to its single
+// canonical service — longest label first so e.g. "full groom" wins over "groom".
+function serviceSynonymEntries() {
+  const out = serviceCombos().map((combo) => ({ label: combo.join(", "), services: combo }));
+  Object.entries(SERVICE_SYNONYMS).forEach(([canonical, synonyms]) => {
+    synonyms.forEach((syn) => out.push({ label: syn, services: [canonical] }));
+  });
+  return out.sort((a, b) => b.label.length - a.label.length);
+}
+function matchServicePrefix(text) {
+  for (const { label, services } of serviceSynonymEntries()) {
+    if (text.toLowerCase().startsWith(label.toLowerCase())) return { services, matchedLength: label.length };
+  }
+  return null;
+}
+
+// Breeds seen in real titles that aren't worth adding to this shop's actual breed list —
+// recognized for import parsing only, never suggested in the normal booking form.
+const BREED_ALIASES = {
+  multipoo: "Maltipoo", // already a real DOG_BREEDS entry, just a common alternate spelling
+  coton: "Coton de Tulear",
+  westie: "West Highland White Terrier",
+  bichon: "Bichon Frise",
+};
+// allKnownBreeds() entries plus BREED_ALIASES keys, longest trigger first.
+function breedMatchCandidates() {
+  const seen = new Set();
+  const out = [];
+  const add = (trigger, canonical) => {
+    const key = trigger.trim().toLowerCase();
+    if (key && !seen.has(key)) { seen.add(key); out.push({ trigger: trigger.trim(), canonical }); }
+  };
+  allKnownBreeds().forEach((b) => add(b, b));
+  Object.entries(BREED_ALIASES).forEach(([alias, canonical]) => add(alias, canonical));
+  return out.sort((a, b) => b.trigger.length - a.trigger.length);
+}
+// Matches a breed at the start of `text`, tolerating missing/extra spaces or hyphens inside
+// the breed name (so "shihtzu" still matches "Shih Tzu") — internal whitespace/hyphens in
+// the trigger become a flexible [\s-]* run rather than requiring an exact match.
+function matchBreedPrefix(text) {
+  for (const { trigger, canonical } of breedMatchCandidates()) {
+    const pattern = trigger
+      .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+      .replace(/[\s-]+/g, "[\\s-]*");
+    const m = new RegExp("^" + pattern, "i").exec(text);
+    if (m) return { breed: canonical, matchedLength: m[0].length };
+  }
+  return null;
+}
+// Scans forward through the token sequence for the earliest point where a recognizable
+// breed or service begins, so a multi-word (or "&"/"and"-joined) pet name gets captured
+// whole instead of always assuming the name is exactly one word. Returns null if nothing
+// is found anywhere, in which case callers fall back to the one-word assumption.
+function findNameAnchor(tokens) {
+  for (let k = 1; k < tokens.length; k++) {
+    const suffix = tokens.slice(k).join(" ");
+    if (matchBreedPrefix(suffix) || matchServicePrefix(suffix)) return k;
+  }
+  return null;
+}
+
 // Best-effort parse of a Calendar event title built as "Name Breed Service[, Service] Remark"
 // back into booking fields — used only by the one-time Calendar import tool (see
-// calendarImportModal below). Pet name is assumed to be the first word (matches how the app
-// itself always builds titles); breed and service are matched against known lists so
-// anything left over falls through to notes. Never throws — worst case everything after the
-// name lands in notes for a human to sort out during the review step.
+// calendarImportModal below). Breed and service are matched against known lists (plus the
+// synonym/alias tables above); the pet name is whatever precedes the earliest recognized
+// breed/service, falling back to just the first word if neither is found anywhere. Never
+// throws — worst case everything after the name lands in notes for a human to sort out
+// during the review step, which is also where `nameFallback`/`hasNameJoiner` steer the
+// "needs attention" grouping (see importCandidateFromEvent).
 function parseEventSummary(summary) {
   const text = (summary || "").trim();
-  if (!text) return { petName: "", breed: "", services: [], notes: "" };
+  if (!text) return { petName: "", breed: "", services: [], notes: "", nameFallback: false, hasNameJoiner: false };
   const tokens = text.split(/\s+/);
-  const petName = tokens.shift() || "";
-  let rest = tokens.join(" ");
+  const anchor = findNameAnchor(tokens);
+  const nameTokenCount = anchor ?? 1;
+  const petName = tokens.slice(0, nameTokenCount).join(" ");
+  let rest = tokens.slice(nameTokenCount).join(" ");
 
   let breed = "";
-  for (const b of allKnownBreeds()) {
-    if (rest.toLowerCase().startsWith(b.toLowerCase())) { breed = b; rest = rest.slice(b.length).trim(); break; }
-  }
+  const breedMatch = matchBreedPrefix(rest);
+  if (breedMatch) { breed = breedMatch.breed; rest = rest.slice(breedMatch.matchedLength).trim(); }
 
   let services = [];
-  for (const combo of serviceCombos()) {
-    const label = combo.join(", ");
-    if (rest.toLowerCase().startsWith(label.toLowerCase())) { services = combo; rest = rest.slice(label.length).trim(); break; }
-  }
+  const serviceMatch = matchServicePrefix(rest);
+  if (serviceMatch) { services = serviceMatch.services; rest = rest.slice(serviceMatch.matchedLength).trim(); }
 
-  return { petName, breed, services, notes: rest };
+  return {
+    petName, breed, services, notes: rest,
+    nameFallback: anchor === null,
+    hasNameJoiner: /&|\band\b/i.test(petName),
+  };
 }
 
 /* ---------- tiny DOM helpers ---------- */
@@ -1861,6 +1943,18 @@ function importCandidateFromEvent(ev) {
     : [];
   const matchedPet = nameMatches.length === 1 ? nameMatches[0] : null;
   const groomer = groomerByCalendarColorId(ev.colorId);
+  const breed = parsed.breed || (matchedPet ? matchedPet.breed || "" : "");
+
+  // Reasons this row needs a human look before importing, computed from the *final* resolved
+  // state (not the raw parse) so e.g. a title with no breed but an exact single pet match
+  // (which backfills breed from that pet's profile) doesn't get flagged unnecessarily. Drives
+  // the "Special attention" grouping in renderImportReview — see importRow for how each is shown.
+  const attentionReasons = [];
+  if (nameMatches.length > 1) attentionReasons.push({ key: "ambiguous-pet", label: `name matches ${nameMatches.length} pets` });
+  if (parsed.nameFallback) attentionReasons.push({ key: "name-fallback", label: "couldn't confidently parse the title — check name/services" });
+  else if (!breed) attentionReasons.push({ key: "no-breed", label: "no breed recognized — check it" });
+  if (parsed.hasNameJoiner) attentionReasons.push({ key: "multi-name", label: "name contains \"&\"/\"and\" — may be more than one pet" });
+
   return {
     eventId: ev.id,
     start: startIso,
@@ -1870,8 +1964,9 @@ function importCandidateFromEvent(ev) {
     // More than one pet shares this name — don't guess which one, surface it for a human
     // to pick instead (see "special attention" grouping in renderImportReview).
     ambiguousPets: nameMatches.length > 1 ? nameMatches : null,
+    attentionReasons,
     petName: parsed.petName,
-    breed: parsed.breed || (matchedPet ? matchedPet.breed || "" : ""),
+    breed,
     services: parsed.services,
     serviceHours,
     notes: parsed.notes,
@@ -1928,6 +2023,9 @@ function calendarImportModal() {
 }
 
 function importRow(c, i) {
+  // Every reason except "ambiguous-pet" gets a plain notice line here — that one keeps its
+  // own dedicated picker block below instead, since it needs a choice, not just a warning.
+  const otherReasons = c.attentionReasons.filter((r) => r.key !== "ambiguous-pet");
   return `
   <div class="card pad imp-row">
     <div class="row" style="justify-content:space-between; align-items:center; gap:10px">
@@ -1938,6 +2036,7 @@ function importRow(c, i) {
       <input id="imp-start-${i}" type="datetime-local" value="${toLocalInput(c.start)}" style="width:auto">
     </div>
     ${c.allDay ? `<div class="faint" style="font-size:11px; color:#a8710a; margin-top:4px">⚠ This was an all-day event on Calendar — no time was set, so 10:00 was guessed. Check it.</div>` : ""}
+    ${otherReasons.length ? `<div class="faint" style="font-size:11px; color:#a8710a; margin-top:4px">⚠ ${otherReasons.map((r) => esc(r.label)).join(" · ")}</div>` : ""}
     ${c.ambiguousPets ? `
       <div class="field" style="margin-top:8px">
         <label style="color:#a8710a">${c.ambiguousPets.length} pets are named "${esc(c.petName)}" — which one is this?</label>
@@ -1989,8 +2088,19 @@ function renderImportReview(candidates, totalFetched) {
     return;
   }
   const indexed = candidates.map((c, i) => ({ c, i }));
-  const ambiguous = indexed.filter((x) => x.c.ambiguousPets);
-  const normal = indexed.filter((x) => !x.c.ambiguousPets);
+  const special = indexed.filter((x) => x.c.attentionReasons.length);
+  const normal = indexed.filter((x) => !x.c.attentionReasons.length);
+  // If every flagged row shares the same single reason, name it specifically; a mixed batch
+  // (e.g. some ambiguous-pet, some no-breed) falls back to one generic heading — each row's
+  // own reason(s) are still spelled out inline via importRow's notice line either way.
+  const REASON_HEADINGS = {
+    "ambiguous-pet": "name matches more than one pet",
+    "no-breed": "no breed could be recognized",
+    "name-fallback": "the title couldn't be confidently parsed",
+    "multi-name": "the name may contain more than one pet",
+  };
+  const reasonKeys = new Set(special.flatMap((x) => x.c.attentionReasons.map((r) => r.key)));
+  const specialHeading = reasonKeys.size === 1 ? REASON_HEADINGS[[...reasonKeys][0]] : "needs a closer look before importing";
 
   openModal(`
     <h2>Review ${candidates.length} booking${candidates.length === 1 ? "" : "s"} to import</h2>
@@ -1999,13 +2109,13 @@ function renderImportReview(candidates, totalFetched) {
       ${skipped > 0 ? `<br><span class="faint">${skipped} event${skipped === 1 ? "" : "s"} already linked to an existing booking ${skipped === 1 ? "was" : "were"} skipped.</span>` : ""}
     </div>
     <div class="stack" id="imp-rows" style="gap:14px; max-height:55vh; overflow:auto; padding-right:4px">
-      ${ambiguous.length ? `
+      ${special.length ? `
         <div class="card pastdue-card" style="padding-bottom:2px">
           <div class="card pad" style="padding-bottom:0; border:0">
-            <h3 class="section-title pastdue-title">⚠ Special attention — name matches more than one pet (${ambiguous.length})</h3>
+            <h3 class="section-title pastdue-title">⚠ Special attention — ${esc(specialHeading)} (${special.length})</h3>
           </div>
           <div class="stack" style="gap:10px; padding:0 16px 16px">
-            ${ambiguous.map((x) => importRow(x.c, x.i)).join("")}
+            ${special.map((x) => importRow(x.c, x.i)).join("")}
           </div>
         </div>` : ""}
       ${normal.length ? `<div class="stack" style="gap:10px">${normal.map((x) => importRow(x.c, x.i)).join("")}</div>` : ""}
@@ -2022,7 +2132,7 @@ function renderImportReview(candidates, totalFetched) {
 
   // Picking a specific pet for an ambiguous row fills in its breed too, same convenience
   // the normal booking form gives when a pet is matched.
-  ambiguous.forEach(({ c, i }) => {
+  indexed.filter((x) => x.c.ambiguousPets).forEach(({ c, i }) => {
     const pick = $(`#imp-petpick-${i}`);
     if (!pick) return;
     pick.onchange = () => {
