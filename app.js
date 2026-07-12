@@ -764,7 +764,21 @@ function viewPetDetail() {
   const p = state.pets.find((x) => x.id === state.petId);
   if (!p) return emptyBlock("🐾", "Pet not found", "", "go-pets", "Back to pets");
   const t = p.times || {};
-  const history = [...(p.history || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
+  // "Service history" merges manually-added records with this pet's own completed bookings,
+  // so staff see the full picture without having to separately dig through Bookings.
+  // origIdx tracks each manual record's real position in p.history (needed for del-history)
+  // independent of where it lands after sorting/merging with booking-derived rows.
+  const manualHistory = (p.history || []).map((h, idx) => ({
+    date: h.date, services: h.services || [], groomerId: h.groomerId, notes: h.notes || "",
+    cost: null, fromBooking: false, origIdx: idx,
+  }));
+  const bookingHistory = state.bookings
+    .filter((b) => b.petId === p.id && b.status === "completed")
+    .map((b) => ({
+      date: b.start, services: b.services || [], groomerId: b.groomerId, notes: b.notes || "",
+      cost: b.totalCost, fromBooking: true,
+    }));
+  const history = [...manualHistory, ...bookingHistory].sort((a, b) => new Date(b.date) - new Date(a.date));
   const photo = p.photo ? `style="background-image:url('${p.photo}')"` : "";
   const priceTier = tierForWeight(p.weight, p.species);
 
@@ -805,14 +819,16 @@ function viewPetDetail() {
     <div class="spread"><h3 class="section-title" style="margin:0">Service history</h3>
       <button class="btn sm" data-action="add-history" data-id="${p.id}">＋ Add record</button></div>
     <div style="margin-top:8px">
-      ${history.length ? history.map((h, i) => `
+      ${history.length ? history.map((h) => `
         <div class="history-item">
           <div class="h-date">${fmtDate(h.date)}</div>
           <div class="h-body">
             <div class="row spread">
               <div><strong>${(h.services || []).map(esc).join(", ") || "Service"}</strong>
-                <span class="groomer-tag" style="margin-left:8px"><span class="dot" style="background:${groomerColor(h.groomerId)}"></span>${esc(groomerName(h.groomerId))}</span></div>
-              ${canDelete() ? `<button class="icon-btn" data-action="del-history" data-id="${p.id}" data-idx="${i}" title="Delete">🗑</button>` : ""}
+                <span class="groomer-tag" style="margin-left:8px"><span class="dot" style="background:${groomerColor(h.groomerId)}"></span>${esc(groomerName(h.groomerId))}</span>
+                ${h.fromBooking ? ` <span class="recur-badge" style="margin-left:6px">Booking</span>` : ""}
+                ${h.cost != null && h.cost !== "" ? ` <span class="muted" style="font-size:13px; margin-left:6px">฿${Number(h.cost).toLocaleString()}</span>` : ""}</div>
+              ${!h.fromBooking && canDelete() ? `<button class="icon-btn" data-action="del-history" data-id="${p.id}" data-idx="${h.origIdx}" title="Delete">🗑</button>` : ""}
             </div>
             ${h.notes ? `<div class="muted" style="font-size:13px; margin-top:4px">${esc(h.notes)}</div>` : ""}
           </div>
