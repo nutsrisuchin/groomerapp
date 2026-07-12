@@ -60,14 +60,22 @@ function tierForWeight(kg, species) {
 }
 function fmtPriceRange(range) { return range[0] === range[1] ? `฿${range[0]}` : `฿${range[0]}–${range[1]}`; }
 // Estimated total for the given services at this pet's weight tier. Returns null if
-// weight is unknown or no priced service is selected.
-function estimateCost(weightKg, services, species) {
+// weight is unknown or no priced service is selected. Each tier's price is a [short, long]
+// pair per the shop's price sheet ("prices depend on hair length") — pass hairLength
+// ("short"/"long") to collapse the range to that exact figure; omit it to get the full
+// range (min/max), e.g. for a quick display before the user has picked one.
+function estimateCost(weightKg, services, species, hairLength) {
   const tier = tierForWeight(weightKg, species);
   if (!tier || !services || !services.length) return null;
+  const idx = hairLength === "long" ? 1 : hairLength === "short" ? 0 : null;
   let min = 0, max = 0, matched = false;
   if (services.includes("Basic")) { min += tier.basic[0]; max += tier.basic[1]; matched = true; }
   if (services.includes("Hair Styling")) { min += tier.fullGroom[0]; max += tier.fullGroom[1]; matched = true; }
   if (!matched) return null;
+  if (idx !== null) {
+    const exact = (services.includes("Basic") ? tier.basic[idx] : 0) + (services.includes("Hair Styling") ? tier.fullGroom[idx] : 0);
+    return { tier: tier.name, min: exact, max: exact, label: `฿${exact}` };
+  }
   return { tier: tier.name, min, max, label: min === max ? `฿${min}` : `฿${min}–${max}` };
 }
 // Palette offered when creating/editing a groomer — the full set of Google Calendar
@@ -816,7 +824,7 @@ function bookingRow(b, opts = {}) {
     : "";
   const total = bookingDurationHours(b);
   const pet = b.petId ? state.pets.find((p) => p.id === b.petId) : null;
-  const estCost = pet ? estimateCost(pet.weight, b.services, pet.species) : null;
+  const estCost = pet ? estimateCost(pet.weight, b.services, pet.species, b.hairLength) : null;
   const costLabel = (b.totalCost != null && b.totalCost !== "") ? `฿${Number(b.totalCost).toLocaleString()}` : (estCost ? estCost.label : null);
   const statusBadge = b.status === "completed" ? ` <span class="status-badge status-completed">✓ Completed</span>`
     : b.status === "cancelled" ? ` <span class="status-badge status-cancelled">✕ Cancelled</span>` : "";
@@ -859,7 +867,7 @@ function bookingConfirmMessage(b) {
 // just keeps that value; leaving it genuinely blank clears it, same as the booking form.
 function completeBookingModal(b) {
   const pet = b.petId ? state.pets.find((p) => p.id === b.petId) : null;
-  const est = pet ? estimateCost(pet.weight, b.services, pet.species) : null;
+  const est = pet ? estimateCost(pet.weight, b.services, pet.species, b.hairLength) : null;
   const prefill = (b.totalCost != null && b.totalCost !== "") ? b.totalCost
     : (est ? Math.round((est.min + est.max) / 2) : "");
   openModal(`
@@ -1125,7 +1133,7 @@ function monthKeyOf(ms) { return dateKey(new Date(ms)).slice(0, 7); }
 function bookingRevenue(b) {
   if (b.totalCost != null && b.totalCost !== "") return Number(b.totalCost);
   const pet = b.petId ? state.pets.find((p) => p.id === b.petId) : null;
-  const est = pet ? estimateCost(pet.weight, b.services, pet.species) : null;
+  const est = pet ? estimateCost(pet.weight, b.services, pet.species, b.hairLength) : null;
   return est ? Math.round((est.min + est.max) / 2) : 0;
 }
 
@@ -1561,6 +1569,7 @@ function bookingModal(booking, prefillPet) {
   let newPetPhoto = null;
   const touchedHours = {}; // service label -> true once the user has hand-edited its hour field
   let costTouched = !!(b.totalCost != null && b.totalCost !== ""); // don't clobber a saved/edited cost
+  let hairLength = b.hairLength || ""; // "short" | "long" | "" (unset) — see updateCostEstimate
 
   const initialName = b.petName || (matchedPet ? matchedPet.name : "");
   const initialBreed = b.breed || (matchedPet ? matchedPet.breed : "");
@@ -1613,6 +1622,14 @@ function bookingModal(booking, prefillPet) {
       <div class="field"><label>Weight (kg)</label>
         <input id="b-weight" type="number" step="0.1" placeholder="8.5" value="${esc(initialWeight)}">
       </div>
+    </div>
+    <div class="field">
+      <label>Hair length</label>
+      <div class="row" id="hair-length-pick" style="gap:8px">
+        <button type="button" class="btn sm ${hairLength === "short" ? "primary" : ""}" data-hair="short">Short</button>
+        <button type="button" class="btn sm ${hairLength === "long" ? "primary" : ""}" data-hair="long">Long</button>
+      </div>
+      <div class="help">Basic/Hair Styling prices are a short/long-hair pair — pick one for an exact price instead of a range.</div>
     </div>
     <div class="field-row">
       <div class="field"><label>Date & time</label><input id="b-start" type="datetime-local" value="${startVal}"></div>
@@ -1735,16 +1752,30 @@ function bookingModal(booking, prefillPet) {
     const weight = $("#b-weight").value;
     const services = $$(".b-svc").filter((cb) => cb.checked).map((cb) => cb.dataset.svc);
     if (!services.length) { el.textContent = ""; return; }
-    const est = estimateCost(weight, services, $("#b-species").value);
-    if (est) {
-      el.innerHTML = `Estimated: ${est.label} (${est.tier})${costTouched ? ' · <button class="link" id="use-estimate" type="button">use this</button>' : ""}`;
-      if (!costTouched) $("#b-cost").value = Math.round((est.min + est.max) / 2);
-      const useBtn = $("#use-estimate");
-      if (useBtn) useBtn.onclick = () => { costTouched = false; $("#b-cost").value = Math.round((est.min + est.max) / 2); updateCostEstimate(); };
-    } else {
-      el.textContent = "Add the pet's weight to estimate cost.";
+    const species = $("#b-species").value;
+    const range = estimateCost(weight, services, species);
+    if (!range) { el.textContent = "Add the pet's weight to estimate cost."; return; }
+    // Only Basic/Hair Styling tiers that actually differ by hair length need a pick — a
+    // tier with a single fixed price doesn't, so don't force a choice that wouldn't change anything.
+    const needsHairLength = range.min !== range.max;
+    if (needsHairLength && !hairLength) {
+      el.innerHTML = `Range: ${range.label} (${range.tier}) — pick Short or Long hair above for the exact price.`;
+      return;
     }
+    const est = needsHairLength ? estimateCost(weight, services, species, hairLength) : range;
+    el.innerHTML = `Estimated: ${est.label} (${est.tier})${costTouched ? ' · <button class="link" id="use-estimate" type="button">use this</button>' : ""}`;
+    if (!costTouched) $("#b-cost").value = est.min;
+    const useBtn = $("#use-estimate");
+    if (useBtn) useBtn.onclick = () => { costTouched = false; $("#b-cost").value = est.min; updateCostEstimate(); };
   }
+  function paintHairLength() {
+    $$("#hair-length-pick button").forEach((btn) => btn.classList.toggle("primary", btn.dataset.hair === hairLength));
+  }
+  $$("#hair-length-pick button").forEach((btn) => btn.onclick = () => {
+    hairLength = hairLength === btn.dataset.hair ? "" : btn.dataset.hair; // click again to clear
+    paintHairLength();
+    updateCostEstimate();
+  });
 
   petInput.addEventListener("input", () => {
     if (matchedPet && petInput.value !== matchedPet.name) matchedPet = null;
@@ -1836,6 +1867,7 @@ function bookingModal(booking, prefillPet) {
       recurrenceUntil: recurrence !== "none" ? ($("#b-until").value || null) : null,
       services: checkedServices.map((c) => c.dataset.svc),
       serviceHours,
+      hairLength: hairLength || null,
       totalCost: $("#b-cost").value === "" ? null : Number($("#b-cost").value),
       notes: $("#b-notes").value.trim(),
       calendarEventId: b.calendarEventId || null,
