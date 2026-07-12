@@ -1192,6 +1192,12 @@ function viewFinancial() {
   <div class="card pad" style="margin-top:16px">
     <div class="section-title">By groomer</div>
     ${groomerRows || emptyInline("No completed bookings this month yet.")}
+  </div>
+  <div class="card bookings-section" style="margin-top:16px">
+    <div class="card pad" style="padding-bottom:0; border:0"><div class="section-title">All Bookings (${completed.length})</div></div>
+    ${completed.length
+      ? [...completed].sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0)).map((b) => bookingRow(b)).join("")
+      : emptyBlock("📅", "No completed bookings this month", "Once a booking is marked complete in this month, it'll show up here.")}
   </div>`;
 }
 
