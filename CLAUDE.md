@@ -235,7 +235,8 @@ Chrome DevTools' device emulation caught the same rendering bug.
 ## This project's data model (Groomingdale-specific)
 
 Firestore collections: `pets`, `groomers`, `bookings`, `admins`, `settings`, `activity`,
-`calendarTombstones`.
+`calendarTombstones`, `deletedBookings` (the Bin — soft-deleted bookings, same doc id as the
+original, restorable via the Bookings page's "🗑 Bin" section; Owner/Admin only).
 
 - **`bookings`**: `petId` (optional — a booking can reference a free-text `petName`/`breed`
   without a real pet record), `groomerId` (`null` = "No preference", rendered as its own

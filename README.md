@@ -60,6 +60,9 @@ The app needs its own free Firebase project to store shared data. About 10 minut
        match /calendarTombstones/{id} {
          allow read, write: if isStaff(); // background Calendar-sync cleanup, not a role-gated action
        }
+       match /deletedBookings/{id} {
+         allow read, create, delete: if canDelete(); // the Bin — same role gate as deleting a booking
+       }
        match /settings/roles {
          allow read: if isStaff();
          allow write: if isOwner();

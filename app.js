@@ -153,7 +153,7 @@ const GROOMER_COLORS = [
 ];
 
 /* ---------- state ---------- */
-const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], scheduleDate: "", scheduleHiddenGroomers: [], financialMonth: "", upcomingRange: "day", search: { name: "", breed: "" } };
+const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], deletedBookings: [], scheduleDate: "", scheduleHiddenGroomers: [], financialMonth: "", upcomingRange: "day", search: { name: "", breed: "" } };
 const getCalendarId = () => (state.settings.find((s) => s.id === "calendar") || {}).calendarId || "";
 const getCustomBreeds = () => (state.settings.find((s) => s.id === "breeds") || {}).list || [];
 
@@ -411,7 +411,7 @@ function timeAgo(ms) {
   return fmtDate(ms);
 }
 const ACTIVITY_ICON = {
-  booking: { created: "📅", updated: "✏️", deleted: "🗑" },
+  booking: { created: "📅", updated: "✏️", deleted: "🗑", restored: "↩️", purged: "🗑" },
   groomer: { created: "🧑‍🎨", updated: "✏️", deleted: "🗑" },
 };
 
@@ -860,6 +860,7 @@ function viewBookings() {
   const upcomingShown = filterByUpcomingRange(upcoming, upcomingRange);
   const completed = state.bookings.filter((b) => b.status === "completed").sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0));
   const cancelled = state.bookings.filter((b) => b.status === "cancelled").sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0));
+  const bin = [...state.deletedBookings].sort((a, b) => (b.deletedAt || 0) - (a.deletedAt || 0));
 
   return `
   <div class="page-head">
@@ -894,10 +895,16 @@ function viewBookings() {
     ${completed.length ? completed.map((b) => bookingRow(b)).join("") : emptyInline("No completed bookings yet.")}
   </details>
 
-  <details class="card bookings-collapsible">
+  <details class="card bookings-collapsible" ${canDelete() ? 'style="margin-bottom:16px"' : ""}>
     <summary>Cancelled Bookings (${cancelled.length})</summary>
     ${cancelled.length ? cancelled.map((b) => bookingRow(b)).join("") : emptyInline("No cancelled bookings yet.")}
-  </details>`;
+  </details>
+
+  ${canDelete() ? `
+  <details class="card bookings-collapsible">
+    <summary>🗑 Bin (${bin.length})</summary>
+    ${bin.length ? bin.map((b) => bookingRow(b, { trashActions: true })).join("") : emptyInline("Nothing in the bin.")}
+  </details>` : ""}`;
 }
 
 function activityRow(a) {
@@ -939,14 +946,20 @@ function bookingRow(b, opts = {}) {
         ${costLabel ? ` · <strong>${costLabel}</strong>` : ""}
         ${b.recurrence && b.recurrence !== "none" ? ` <span class="recur-badge">${recur.label}${b.recurrenceUntil ? ` until ${fmtDate(b.recurrenceUntil)}` : ""}</span>` : ""}
       </div>
+      ${opts.trashActions ? `<div class="faint" style="font-size:12px; margin-top:2px">Deleted ${timeAgo(b.deletedAt)}${b.deletedBy ? ` by ${esc(b.deletedBy)}` : ""}</div>` : ""}
     </div>
     <div class="booking-actions">
-      ${opts.showResolveActions ? `
-        <button class="btn sm" data-action="complete-booking" data-id="${b.id}">✓ Complete</button>
-        <button class="btn sm danger" data-action="cancel-booking" data-id="${b.id}">✕ Cancel</button>` : ""}
-      <button class="btn sm" data-action="edit-booking" data-id="${b.id}">Edit</button>
-      <button class="icon-btn" data-action="copy-confirm" data-id="${b.id}" title="Copy confirmation message">📋</button>
-      ${canDelete() ? `<button class="icon-btn" data-action="del-booking" data-id="${b.id}" title="Delete">🗑</button>` : ""}
+      ${opts.trashActions ? `
+        <button class="btn sm" data-action="restore-booking" data-id="${b.id}">↩ Restore</button>
+        <button class="icon-btn" data-action="purge-booking" data-id="${b.id}" title="Delete permanently">🗑</button>
+      ` : `
+        ${opts.showResolveActions ? `
+          <button class="btn sm" data-action="complete-booking" data-id="${b.id}">✓ Complete</button>
+          <button class="btn sm danger" data-action="cancel-booking" data-id="${b.id}">✕ Cancel</button>` : ""}
+        <button class="btn sm" data-action="edit-booking" data-id="${b.id}">Edit</button>
+        <button class="icon-btn" data-action="copy-confirm" data-id="${b.id}" title="Copy confirmation message">📋</button>
+        ${canDelete() ? `<button class="icon-btn" data-action="del-booking" data-id="${b.id}" title="Delete">🗑</button>` : ""}
+      `}
     </div>
   </div>`;
 }
@@ -2542,9 +2555,16 @@ async function handleAction(action, data) {
       catch (err) { toast(`Couldn't copy automatically — here it is: ${msg}`); }
     } break;
     case "del-booking":
-      if (confirm("Delete this booking?")) {
+      if (confirm("Delete this booking? It'll move to the Bin, where it can be restored later.")) {
         const deleted = state.bookings.find((b) => b.id === data.id);
-        await DB.del("bookings", data.id); removeLocal("bookings", data.id); toast("Booking deleted"); render();
+        if (deleted) {
+          // Soft delete: the full record moves to deletedBookings (same id, so restoring is
+          // just moving it back) instead of being destroyed outright — see the Bin section.
+          const trashed = { ...deleted, deletedAt: Date.now(), deletedBy: currentAdminName() };
+          await DB.put("deletedBookings", trashed);
+          upsertLocal("deletedBookings", trashed);
+        }
+        await DB.del("bookings", data.id); removeLocal("bookings", data.id); toast("Booking moved to Bin"); render();
         if (deleted && deleted.calendarEventId) {
           // Always queue a tombstone, connected or not — whichever device is connected
           // (this one now, or another one later) will pick it up via reconcileCalendar().
@@ -2554,6 +2574,29 @@ async function handleAction(action, data) {
           reconcileCalendar();
         }
         if (deleted) logActivity("booking", "deleted", `${deleted.petName}${deleted.breed ? ` (${deleted.breed})` : ""} with ${groomerName(deleted.groomerId)}`);
+      }
+      break;
+    case "restore-booking": {
+      const rec = state.deletedBookings.find((b) => b.id === data.id);
+      if (rec) {
+        const { deletedAt, deletedBy, ...rest } = rec;
+        // The old Calendar event was tombstoned when this was deleted (and may be long
+        // gone) — calendarDirty:true + no calendarEventId makes reconcileCalendar() create
+        // a fresh one, same "gone means recreate" pattern used for any other sync gap.
+        const restored = { ...rest, calendarEventId: null, calendarDirty: true };
+        await DB.put("bookings", restored); upsertLocal("bookings", restored);
+        await DB.del("deletedBookings", data.id); removeLocal("deletedBookings", data.id);
+        toast("Booking restored"); render(); reconcileCalendar();
+        logActivity("booking", "restored", `${restored.petName}${restored.breed ? ` (${restored.breed})` : ""} with ${groomerName(restored.groomerId)}`);
+      }
+      break;
+    }
+    case "purge-booking":
+      if (confirm("Permanently delete this booking? This cannot be undone.")) {
+        const purged = state.deletedBookings.find((b) => b.id === data.id);
+        await DB.del("deletedBookings", data.id); removeLocal("deletedBookings", data.id);
+        toast("Booking permanently deleted"); render();
+        if (purged) logActivity("booking", "purged", `${purged.petName}${purged.breed ? ` (${purged.breed})` : ""}`);
       }
       break;
     case "complete-booking": {
@@ -2678,7 +2721,7 @@ document.addEventListener("click", (e) => {
 /* ===================================================================
    AUTH GATE + BOOT
 =================================================================== */
-const COLLECTIONS = ["pets", "groomers", "bookings", "admins", "settings", "activity", "calendarTombstones"];
+const COLLECTIONS = ["pets", "groomers", "bookings", "admins", "settings", "activity", "calendarTombstones", "deletedBookings"];
 let watchers = [];
 
 function startWatchers() {
