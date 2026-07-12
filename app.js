@@ -493,7 +493,9 @@ function isPastDue(b) {
 // of today; "all" (or an empty list) is returned as-is.
 function filterByUpcomingRange(upcoming, range) {
   if (range === "all" || !upcoming.length) return upcoming;
-  const days = range === "week" ? 7 : range === "month" ? 30 : 1;
+  // +1 so "day" covers today AND tomorrow (not just the remainder of today) — otherwise a
+  // shop closed today with bookings starting tomorrow would show zero results for "Next day".
+  const days = (range === "week" ? 7 : range === "month" ? 30 : 1) + 1;
   const cutoff = startOfToday();
   cutoff.setDate(cutoff.getDate() + days);
   return upcoming.filter((b) => nextOccurrence(b) < cutoff);
