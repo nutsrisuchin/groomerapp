@@ -2047,19 +2047,21 @@ function calendarImportModal() {
       skipped automatically — safe to re-run any time.
     </div>
     <div class="field-row">
-      <div class="field"><label>From</label><input id="imp-from" type="date" value="${defaultFrom}"></div>
-      <div class="field"><label>To</label><input id="imp-to" type="date" value="${defaultTo}"></div>
+      <div class="field"><label>From</label><input id="imp-from" type="text" inputmode="numeric" placeholder="YYYY-MM-DD" value="${defaultFrom}"></div>
+      <div class="field"><label>To</label><input id="imp-to" type="text" inputmode="numeric" placeholder="YYYY-MM-DD" value="${defaultTo}"></div>
     </div>
-    <div class="help">Covers both past and upcoming events by default — widen it if some of your bookings fall outside this range.</div>
+    <div class="help">Type each date as YYYY-MM-DD (e.g. 2024-01-31). Covers both past and upcoming events by default — widen it if some of your bookings fall outside this range.</div>
     <div class="help" id="imp-status"></div>
     <div class="row" style="justify-content:flex-end; margin-top:8px">
       <button class="btn" data-close-modal>Cancel</button>
       <button class="btn primary" id="imp-fetch">Fetch events</button>
     </div>`);
 
+  const isValidDateStr = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && dateKey(new Date(s + "T00:00:00")) === s;
+
   $("#imp-fetch").onclick = async () => {
-    const fromV = $("#imp-from").value, toV = $("#imp-to").value;
-    if (!fromV || !toV) { toast("Pick both dates"); return; }
+    const fromV = $("#imp-from").value.trim(), toV = $("#imp-to").value.trim();
+    if (!isValidDateStr(fromV) || !isValidDateStr(toV)) { toast("Please enter both dates as YYYY-MM-DD"); return; }
     const btn = $("#imp-fetch");
     btn.disabled = true; btn.textContent = "Fetching…";
     $("#imp-status").textContent = "";
