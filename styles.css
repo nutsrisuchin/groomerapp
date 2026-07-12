@@ -274,8 +274,11 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 }
 .fin-stats{display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:16px; margin-top:16px}
 .fin-stat-value{font-size:28px; font-weight:800; margin-top:4px}
-.fin-groomer-row{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 0; border-bottom:1px solid var(--line)}
+.fin-groomer-row{display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid var(--line)}
 .fin-groomer-row:last-child{border-bottom:0}
+.fin-groomer-row .groomer-tag{flex:1; min-width:0}
+.fin-groomer-row .faint{width:90px; flex:none; text-align:right}
+.fin-groomer-row strong{width:90px; flex:none; text-align:right}
 
 /* ---------- Schedule: Google-Calendar-style layout ---------- */
 .gcal-layout{display:flex; gap:20px; align-items:flex-start}
