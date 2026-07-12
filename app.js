@@ -1586,6 +1586,9 @@ function bookingModal(booking, prefillPet) {
   const initialSpecies = matchedPet ? (matchedPet.species || "dog") : "dog";
   const initialServices = b.services || [];
   const initialHours = b.serviceHours || {};
+  const initialAddOnNote = b.addOnNote || "";
+  const initialAddOnPrice = b.addOnPrice || "";
+  const initialAddOnEnabled = !!(initialAddOnNote || initialAddOnPrice);
 
   openModal(`
     <h2>${booking ? "Edit booking" : "New booking"}</h2>
@@ -1658,6 +1661,15 @@ function bookingModal(booking, prefillPet) {
             <input type="number" class="b-hr" data-svc="${esc(s)}" min="0" step="0.25" placeholder="hrs"
               value="${esc(initialHours[s] ?? "")}" ${initialServices.includes(s) ? "" : "disabled"}>
           </label>`).join("")}
+        <label class="svc-row">
+          <input type="checkbox" id="b-addon-check" class="svc-real-checkbox" ${initialAddOnEnabled ? "checked" : ""}>
+          <span class="svc-box" aria-hidden="true"></span>
+          <span class="svc-name">Add-on</span>
+        </label>
+        <div class="field-row" id="addon-fields" style="margin-top:-2px" ${initialAddOnEnabled ? "" : "hidden"}>
+          <input id="b-addon-note" placeholder="What's the add-on? e.g. Nail clipping" value="${esc(initialAddOnNote)}">
+          <input id="b-addon-price" type="number" min="0" step="1" placeholder="Price ฿" value="${esc(initialAddOnPrice)}">
+        </div>
       </div>
       <div class="help" id="duration-total" style="margin-top:6px"></div>
     </div>
@@ -1757,15 +1769,23 @@ function bookingModal(booking, prefillPet) {
     if (!el) return;
     const weight = $("#b-weight").value;
     const services = $$(".b-svc").filter((cb) => cb.checked).map((cb) => cb.dataset.svc);
-    if (!services.length) { el.textContent = ""; return; }
+    const addOnOn = $("#b-addon-check").checked;
+    const addOnPrice = addOnOn ? (Number($("#b-addon-price").value) || 0) : 0;
+    if (!services.length && !addOnOn) { el.textContent = ""; return; }
+
     // hairLength always has a value (defaults "long"), so this is always the exact price —
     // never a range or an in-between average.
-    const est = estimateCost(weight, services, $("#b-species").value, hairLength);
-    if (!est) { el.textContent = "Add the pet's weight to estimate cost."; return; }
-    el.innerHTML = `Estimated: ${est.label} (${est.tier})${costTouched ? ' · <button class="link" id="use-estimate" type="button">use this</button>' : ""}`;
-    if (!costTouched) $("#b-cost").value = est.min;
+    const est = services.length ? estimateCost(weight, services, $("#b-species").value, hairLength) : null;
+    if (services.length && !est) { el.textContent = "Add the pet's weight to estimate cost."; return; }
+
+    const total = (est ? est.min : 0) + addOnPrice;
+    const parts = [];
+    if (est) parts.push(`${est.label} (${est.tier})`);
+    if (addOnOn && addOnPrice) parts.push(`+ ฿${addOnPrice.toLocaleString()} add-on`);
+    el.innerHTML = `Estimated: ฿${total.toLocaleString()}${parts.length ? ` — ${parts.join(" ")}` : ""}${costTouched ? ' · <button class="link" id="use-estimate" type="button">use this</button>' : ""}`;
+    if (!costTouched) $("#b-cost").value = total;
     const useBtn = $("#use-estimate");
-    if (useBtn) useBtn.onclick = () => { costTouched = false; $("#b-cost").value = est.min; updateCostEstimate(); };
+    if (useBtn) useBtn.onclick = () => { costTouched = false; $("#b-cost").value = total; updateCostEstimate(); };
   }
   function paintHairLength() {
     $$("#hair-length-pick button").forEach((btn) => btn.classList.toggle("primary", btn.dataset.hair === hairLength));
@@ -1791,6 +1811,13 @@ function bookingModal(booking, prefillPet) {
     updateTotal();
   }));
   $$(".b-hr").forEach((inp) => inp.addEventListener("input", () => { touchedHours[inp.dataset.svc] = true; updateTotal(); }));
+
+  $("#b-addon-check").addEventListener("change", (e) => {
+    $("#addon-fields").hidden = !e.target.checked;
+    if (!e.target.checked) { $("#b-addon-note").value = ""; $("#b-addon-price").value = ""; }
+    updateCostEstimate();
+  });
+  $("#b-addon-price").addEventListener("input", updateCostEstimate);
 
   $("#b-recur").addEventListener("change", () => { $("#b-until-field").hidden = $("#b-recur").value === "none"; });
   $("#b-species").addEventListener("change", () => {
@@ -1819,7 +1846,7 @@ function bookingModal(booking, prefillPet) {
     if (!petName) { toast("Please enter a pet"); return; }
     if (!$("#b-groomer").value) { toast("Please choose a groomer"); return; }
     const checkedServices = $$(".b-svc").filter((c) => c.checked);
-    if (checkedServices.length === 0) { toast("Please select at least one service"); return; }
+    if (checkedServices.length === 0 && !$("#b-addon-check").checked) { toast("Please select at least one service"); return; }
     for (const cb of checkedServices) {
       const hrInput = $(`.b-hr[data-svc="${cb.dataset.svc}"]`);
       if (!hrInput.value || Number(hrInput.value) <= 0) { toast(`Please enter hours for ${cb.dataset.svc}`); hrInput.focus(); return; }
@@ -1867,6 +1894,8 @@ function bookingModal(booking, prefillPet) {
       services: checkedServices.map((c) => c.dataset.svc),
       serviceHours,
       hairLength,
+      addOnNote: $("#b-addon-check").checked ? $("#b-addon-note").value.trim() : "",
+      addOnPrice: $("#b-addon-check").checked ? (Number($("#b-addon-price").value) || 0) : 0,
       totalCost: $("#b-cost").value === "" ? null : Number($("#b-cost").value),
       notes: $("#b-notes").value.trim(),
       calendarEventId: b.calendarEventId || null,
