@@ -14,7 +14,7 @@ const DOG_BREEDS = [
   "Corgi", "Pomeranian", "Maltipoo", "Poodle", "Siberian Husky", "Labrador Retriever",
   "Golden Retriever", "Shih Tzu", "Chihuahua", "French Bulldog", "Bulldog", "Beagle",
   "Pug", "Maltese", "Schnauzer", "Shiba Inu", "Border Collie", "Dachshund",
-  "Yorkshire Terrier", "Cavalier King Charles Spaniel",
+  "Yorkshire Terrier", "Cavalier King Charles Spaniel", "Bichon Frise", "Coton de Tulear",
 ];
 const CAT_BREEDS = [
   "Domestic Shorthair", "Domestic Longhair", "Persian", "Siamese", "British Shorthair",
@@ -31,26 +31,42 @@ const RECUR = {
 };
 // Maps a booking service label to the key used in a pet profile's typical-time fields
 const SERVICE_TIME_KEY = { "Basic": "shower", "Hair Styling": "styling" };
-// Weight-tier pricing (THB) from the shop's price sheet. Basic is a range (the sheet notes
-// it depends on hair length, which isn't tracked yet, so we show the full range); same
-// for Full Groom (mapped to "Hair Styling") — a range for most tiers, occasionally a
-// single fixed price (modeled as [n, n] so the shape is consistent either way).
+// Weight-tier pricing (THB) from the shop's price sheet. Each tier's Basic/Hair Styling
+// price is a [short, long] pair. For dogs both are always a single exact figure. For cats,
+// the "long" Hair Styling price is sometimes itself a small set of exact prices instead of
+// one number (staff picks the one that matches the pet's actual coat/work at booking time)
+// — modeled as an array, e.g. fullGroom: [900, [1000, 1100, 1200]], vs. a plain number for
+// every other short/long slot.
 const DOG_WEIGHT_TIERS = [
-  { name: "Tiny",         maxKg: 2,  basic: [300, 350],   fullGroom: [600, 600] },
-  { name: "Mini",         maxKg: 5,  basic: [400, 450],   fullGroom: [750, 750] },
-  { name: "Small",        maxKg: 10, basic: [500, 550],   fullGroom: [900, 900] },
-  { name: "Medium",       maxKg: 15, basic: [650, 700],   fullGroom: [1300, 1300] },
-  { name: "Large",        maxKg: 20, basic: [750, 850],   fullGroom: [1550, 1550] },
-  { name: "Extra-Large",  maxKg: 30, basic: [950, 1150],  fullGroom: [1800, 1800] },
-  { name: "Giant",        maxKg: 40, basic: [1200, 1500], fullGroom: [1900, 1900] },
-  { name: "Extra-Giant",  maxKg: 50, basic: [1500, 1600], fullGroom: [2500, 2500] },
+  { name: "Tiny",         maxKg: 5,  basic: [450, 500],   fullGroom: [500, 700] },
+  { name: "Small",        maxKg: 10, basic: [500, 600],   fullGroom: [700, 850] },
+  { name: "Medium",       maxKg: 15, basic: [650, 750],   fullGroom: [850, 1100] },
+  { name: "Large",        maxKg: 20, basic: [800, 900],   fullGroom: [1200, 1400] },
+  { name: "Extra-Large",  maxKg: 30, basic: [950, 1200],  fullGroom: [1500, 1700] },
+  { name: "Giant",        maxKg: 40, basic: [1200, 1500], fullGroom: [1700, 2000] },
+  { name: "Extra-Giant",  maxKg: 50, basic: [1500, 1700], fullGroom: [2100, 2500] },
 ];
 const CAT_WEIGHT_TIERS = [
-  { name: "Tiny",   maxKg: 1,  basic: [300, 350], fullGroom: [500, 500] },
-  { name: "Small",  maxKg: 3,  basic: [350, 550], fullGroom: [800, 850] },
-  { name: "Medium", maxKg: 5,  basic: [500, 650], fullGroom: [1000, 1100] },
-  { name: "Large",  maxKg: 10, basic: [700, 800], fullGroom: [1200, 1300] },
+  { name: "Small",        maxKg: 4,        basic: [600, 700], fullGroom: [900, [1000, 1100, 1200]] },
+  { name: "Medium-Large", maxKg: Infinity, basic: [700, 900], fullGroom: [1200, [1300, 1400, 1500]] },
 ];
+// Dog-only surcharge for coat-heavy breeds (per the shop's price sheet breed callouts under
+// Basic/Hair Styling) — applied automatically regardless of weight tier or hair length.
+// Matched by substring so "Toy Poodle", "Bichon Frise", "Coton de Tulear", etc. all qualify.
+const PREMIUM_BREED_KEYWORDS = ["bichon", "coton", "maltipoo", "maltese", "poodle"];
+const PREMIUM_BREED_SURCHARGE = { "Basic": 100, "Hair Styling": 200 };
+function isPremiumBreed(breed) {
+  if (!breed) return false;
+  const b = breed.toLowerCase();
+  return PREMIUM_BREED_KEYWORDS.some((k) => b.includes(k));
+}
+function premiumSurcharge(species, breed, services) {
+  if (species !== "dog" || !isPremiumBreed(breed)) return 0;
+  let sur = 0;
+  if (services.includes("Basic")) sur += PREMIUM_BREED_SURCHARGE["Basic"];
+  if (services.includes("Hair Styling")) sur += PREMIUM_BREED_SURCHARGE["Hair Styling"];
+  return sur;
+}
 function tiersForSpecies(species) { return species === "cat" ? CAT_WEIGHT_TIERS : DOG_WEIGHT_TIERS; }
 function tierForWeight(kg, species) {
   const n = Number(kg);
@@ -58,25 +74,55 @@ function tierForWeight(kg, species) {
   const tiers = tiersForSpecies(species);
   return tiers.find((t) => n <= t.maxKg) || tiers[tiers.length - 1];
 }
-function fmtPriceRange(range) { return range[0] === range[1] ? `฿${range[0]}` : `฿${range[0]}–${range[1]}`; }
+// range[1] may be an array (see CAT_WEIGHT_TIERS' multi-option long Hair Styling price) —
+// collapse it to its highest option so the summary pill still reads as a plain low–high range.
+function fmtPriceRange(range) {
+  const hi = Array.isArray(range[1]) ? Math.max(...range[1]) : range[1];
+  return range[0] === hi ? `฿${range[0]}` : `฿${range[0]}–${hi}`;
+}
+// A tier's long Hair Styling price may be a fixed number or (cats) an array of a few exact
+// options — these two helpers make every other call site treat it as a single number without
+// caring which.
+function tierLongMax(tier) {
+  const v = tier.fullGroom[1];
+  return Array.isArray(v) ? Math.max(...v) : v;
+}
+function tierLongPrice(tier, override) {
+  const v = tier.fullGroom[1];
+  if (!Array.isArray(v)) return v;
+  return v.includes(Number(override)) ? Number(override) : v[0];
+}
 // Estimated total for the given services at this pet's weight tier. Returns null if
-// weight is unknown or no priced service is selected. Each tier's price is a [short, long]
-// pair per the shop's price sheet ("prices depend on hair length") — pass hairLength
-// ("short"/"long") to collapse the range to that exact figure; omit it to get the full
-// range (min/max), e.g. for a quick display before the user has picked one.
-function estimateCost(weightKg, services, species, hairLength) {
+// weight is unknown or no priced service is selected. Pass hairLength ("short"/"long") to
+// collapse the short/long pair to that exact figure; omit it to get the full range
+// (min/max), e.g. for a quick display before the user has picked one. `breed` drives the
+// premium-breed surcharge (dogs only). `styleLongOverride` picks which exact price to use
+// when a cat's long Hair Styling price is a multi-option range (see tierLongPrice above) —
+// defaults to the lowest option when omitted or not one of the valid options.
+function estimateCost(weightKg, services, species, hairLength, breed, styleLongOverride) {
   const tier = tierForWeight(weightKg, species);
   if (!tier || !services || !services.length) return null;
   const idx = hairLength === "long" ? 1 : hairLength === "short" ? 0 : null;
+  const styleOptions = Array.isArray(tier.fullGroom[1]) ? tier.fullGroom[1] : null;
+  const surcharge = premiumSurcharge(species, breed, services);
   let min = 0, max = 0, matched = false;
   if (services.includes("Basic")) { min += tier.basic[0]; max += tier.basic[1]; matched = true; }
-  if (services.includes("Hair Styling")) { min += tier.fullGroom[0]; max += tier.fullGroom[1]; matched = true; }
+  if (services.includes("Hair Styling")) { min += tier.fullGroom[0]; max += tierLongMax(tier); matched = true; }
   if (!matched) return null;
+  min += surcharge; max += surcharge;
   if (idx !== null) {
-    const exact = (services.includes("Basic") ? tier.basic[idx] : 0) + (services.includes("Hair Styling") ? tier.fullGroom[idx] : 0);
-    return { tier: tier.name, min: exact, max: exact, label: `฿${exact}` };
+    const basicPart = services.includes("Basic") ? tier.basic[idx] : 0;
+    const stylePart = services.includes("Hair Styling")
+      ? (idx === 1 ? tierLongPrice(tier, styleLongOverride) : tier.fullGroom[0])
+      : 0;
+    const exact = basicPart + stylePart + surcharge;
+    return {
+      tier: tier.name, min: exact, max: exact, label: `฿${exact}`, surcharge,
+      styleOptions: (idx === 1 && services.includes("Hair Styling")) ? styleOptions : null,
+      styleLongPrice: (idx === 1 && services.includes("Hair Styling")) ? stylePart : null,
+    };
   }
-  return { tier: tier.name, min, max, label: min === max ? `฿${min}` : `฿${min}–${max}` };
+  return { tier: tier.name, min, max, label: min === max ? `฿${min}` : `฿${min}–${max}`, surcharge, styleOptions: null, styleLongPrice: null };
 }
 // Palette offered when creating/editing a groomer — the full set of Google Calendar
 // event colors (exact hexes), so a groomer's swatch here matches their events later.
@@ -227,8 +273,9 @@ function matchServicePrefix(text) {
   return null;
 }
 
-// Breeds seen in real titles that aren't worth adding to this shop's actual breed list —
-// recognized for import parsing only, never suggested in the normal booking form.
+// Shorthand seen in real Calendar titles, mapped to their canonical breed name (some of
+// which — Coton de Tulear, Bichon Frise — are now also real DOG_BREEDS entries; the alias
+// here is just what catches the shorthand itself, e.g. "coton" alone, during import parsing).
 const BREED_ALIASES = {
   multipoo: "Maltipoo", // already a real DOG_BREEDS entry, just a common alternate spelling
   coton: "Coton de Tulear",
@@ -847,7 +894,7 @@ function bookingRow(b, opts = {}) {
     : "";
   const total = bookingDurationHours(b);
   const pet = b.petId ? state.pets.find((p) => p.id === b.petId) : null;
-  const estCost = pet ? estimateCost(pet.weight, b.services, pet.species, b.hairLength || "long") : null;
+  const estCost = pet ? estimateCost(pet.weight, b.services, pet.species, b.hairLength || "long", b.breed) : null;
   const costLabel = (b.totalCost != null && b.totalCost !== "") ? `฿${Number(b.totalCost).toLocaleString()}` : (estCost ? estCost.label : null);
   const statusBadge = b.status === "completed" ? ` <span class="status-badge status-completed">✓ Completed</span>`
     : b.status === "cancelled" ? ` <span class="status-badge status-cancelled">✕ Cancelled</span>` : "";
@@ -890,7 +937,7 @@ function bookingConfirmMessage(b) {
 // just keeps that value; leaving it genuinely blank clears it, same as the booking form.
 function completeBookingModal(b) {
   const pet = b.petId ? state.pets.find((p) => p.id === b.petId) : null;
-  const est = pet ? estimateCost(pet.weight, b.services, pet.species, b.hairLength || "long") : null;
+  const est = pet ? estimateCost(pet.weight, b.services, pet.species, b.hairLength || "long", b.breed) : null;
   const prefill = (b.totalCost != null && b.totalCost !== "") ? b.totalCost : (est ? est.min : "");
   openModal(`
     <h2>Complete booking</h2>
@@ -1156,7 +1203,7 @@ function monthKeyOf(ms) { return dateKey(new Date(ms)).slice(0, 7); }
 function bookingRevenue(b) {
   if (b.totalCost != null && b.totalCost !== "") return Number(b.totalCost);
   const pet = b.petId ? state.pets.find((p) => p.id === b.petId) : null;
-  const est = pet ? estimateCost(pet.weight, b.services, pet.species, b.hairLength || "long") : null;
+  const est = pet ? estimateCost(pet.weight, b.services, pet.species, b.hairLength || "long", b.breed) : null;
   return est ? est.min : 0;
 }
 
@@ -1599,6 +1646,7 @@ function bookingModal(booking, prefillPet) {
   const touchedHours = {}; // service label -> true once the user has hand-edited its hour field
   let costTouched = !!(b.totalCost != null && b.totalCost !== ""); // don't clobber a saved/edited cost
   let hairLength = b.hairLength || "long"; // "short" | "long" — defaults long so an estimate is always exact, never an in-between average
+  let styleLongOverride = null; // cat-only: which exact long Hair Styling price staff picked, when the tier offers more than one
 
   const initialName = b.petName || (matchedPet ? matchedPet.name : "");
   const initialBreed = b.breed || (matchedPet ? matchedPet.breed : "");
@@ -1701,6 +1749,7 @@ function bookingModal(booking, prefillPet) {
       <label>Total cost (฿)</label>
       <input id="b-cost" type="number" min="0" step="1" placeholder="0" value="${esc(b.totalCost ?? "")}">
       <div class="help" id="cost-estimate" style="margin-top:4px"></div>
+      <div class="row" id="style-price-pick" style="gap:6px; margin-top:6px" hidden></div>
     </div>
 
     <div class="field"><label>Notes</label><textarea id="b-notes" placeholder="Anything the groomer should know…">${esc(b.notes || "")}</textarea></div>
@@ -1789,21 +1838,41 @@ function bookingModal(booking, prefillPet) {
   }
   function updateCostEstimate() {
     const el = $("#cost-estimate");
+    const pickEl = $("#style-price-pick");
     if (!el) return;
     const weight = $("#b-weight").value;
+    const species = $("#b-species").value;
+    const breed = $("#b-breed").value.trim();
     const services = $$(".b-svc").filter((cb) => cb.checked).map((cb) => cb.dataset.svc);
     const addOnOn = $("#b-addon-check").checked;
     const addOnPrice = addOnOn ? (Number($("#b-addon-price").value) || 0) : 0;
-    if (!services.length && !addOnOn) { el.textContent = ""; return; }
+    if (!services.length && !addOnOn) { el.textContent = ""; pickEl.hidden = true; return; }
 
     // hairLength always has a value (defaults "long"), so this is always the exact price —
     // never a range or an in-between average.
-    const est = services.length ? estimateCost(weight, services, $("#b-species").value, hairLength) : null;
-    if (services.length && !est) { el.textContent = "Add the pet's weight to estimate cost."; return; }
+    const est = services.length ? estimateCost(weight, services, species, hairLength, breed, styleLongOverride) : null;
+    if (services.length && !est) { el.textContent = "Add the pet's weight to estimate cost."; pickEl.hidden = true; return; }
+
+    // A cat's long Hair Styling price can be one of a few exact options instead of a single
+    // number — surface a small picker so staff choose which applies, defaulting to the
+    // lowest so the total is always exact even before anyone touches it.
+    if (est && est.styleOptions) {
+      if (!est.styleOptions.includes(styleLongOverride)) styleLongOverride = est.styleOptions[0];
+      pickEl.hidden = false;
+      pickEl.innerHTML = `<span class="faint" style="font-size:12px; align-self:center">Hair Styling price:</span>` +
+        est.styleOptions.map((p) => `<button type="button" class="btn sm ${p === styleLongOverride ? "primary" : ""}" data-style-price="${p}">฿${p}</button>`).join("");
+      $$("[data-style-price]", pickEl).forEach((btn) => btn.onclick = () => {
+        styleLongOverride = Number(btn.dataset.stylePrice);
+        updateCostEstimate();
+      });
+    } else {
+      pickEl.hidden = true;
+    }
 
     const total = (est ? est.min : 0) + addOnPrice;
     const parts = [];
     if (est) parts.push(`${est.label} (${est.tier})`);
+    if (est && est.surcharge) parts.push(`incl. ฿${est.surcharge} breed surcharge`);
     if (addOnOn && addOnPrice) parts.push(`+ ฿${addOnPrice.toLocaleString()} add-on`);
     el.innerHTML = `Estimated: ฿${total.toLocaleString()}${parts.length ? ` — ${parts.join(" ")}` : ""}${costTouched ? ' · <button class="link" id="use-estimate" type="button">use this</button>' : ""}`;
     if (!costTouched) $("#b-cost").value = total;
@@ -1841,6 +1910,7 @@ function bookingModal(booking, prefillPet) {
     updateCostEstimate();
   });
   $("#b-addon-price").addEventListener("input", updateCostEstimate);
+  $("#b-breed").addEventListener("input", updateCostEstimate); // breed drives the premium-breed surcharge
 
   $("#b-recur").addEventListener("change", () => { $("#b-until-field").hidden = $("#b-recur").value === "none"; });
   $("#b-species").addEventListener("change", () => {
