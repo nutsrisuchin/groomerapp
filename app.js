@@ -949,7 +949,8 @@ function bookingRow(b, opts = {}) {
 // Uses the upcoming occurrence for recurring bookings (same date bookingRow shows), not the original start.
 function bookingConfirmMessage(b) {
   const when = nextOccurrence(b) || new Date(b.start);
-  return ["confirmed", "น้อง", b.petName, b.breed, `${fmtDate(when)} ${fmtTime(when)}`].filter(Boolean).join(" ");
+  const services = (b.services || []).join(", ");
+  return ["confirmed", `N'${b.petName}`, b.breed, services, `${fmtDate(when)} ${fmtTime(when)}`].filter(Boolean).join(" ");
 }
 
 // Confirming "Complete" also doubles as the last chance to fix the price — one modal
