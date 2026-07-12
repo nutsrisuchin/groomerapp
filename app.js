@@ -645,6 +645,11 @@ function removeLocal(name, id) {
   state[name] = state[name].filter((x) => x.id !== id);
 }
 
+// Tracks which "page" was on screen at the last render, so render() can tell a real page
+// switch (scroll to top, like a fresh page load) apart from a re-render of the *same* page
+// after a background data change (saving/completing/deleting a booking, another device's
+// edit arriving via onSnapshot, etc.) — those should leave the user's scroll position alone.
+let lastRenderedPage = null;
 function render() {
   // Self-heals if a role's access changed while this session was sitting on a page it can
   // no longer see (e.g. the App Owner just unchecked a section for their role, live).
@@ -666,7 +671,9 @@ function render() {
   else if (state.view === "schedule") v.innerHTML = viewSchedule();
   else if (state.view === "financial") v.innerHTML = viewFinancial();
   bindView();
-  window.scrollTo({ top: 0 });
+  const page = `${state.view}:${state.petId || ""}`;
+  if (page !== lastRenderedPage) window.scrollTo({ top: 0 });
+  lastRenderedPage = page;
 }
 
 function go(view, petId = null) {
