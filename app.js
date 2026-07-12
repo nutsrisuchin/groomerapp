@@ -2566,9 +2566,15 @@ async function handleAction(action, data) {
         if (deleted) {
           // Soft delete: the full record moves to deletedBookings (same id, so restoring is
           // just moving it back) instead of being destroyed outright — see the Bin section.
-          const trashed = { ...deleted, deletedAt: Date.now(), deletedBy: currentAdminName() };
-          await DB.put("deletedBookings", trashed);
-          upsertLocal("deletedBookings", trashed);
+          // Best-effort like Calendar sync: the backup copy must never block the actual
+          // deletion (e.g. if deletedBookings' security rule isn't published yet).
+          try {
+            const trashed = { ...deleted, deletedAt: Date.now(), deletedBy: currentAdminName() };
+            await DB.put("deletedBookings", trashed);
+            upsertLocal("deletedBookings", trashed);
+          } catch (err) {
+            console.error("Couldn't back up to Bin (deleting anyway)", err);
+          }
         }
         await DB.del("bookings", data.id); removeLocal("bookings", data.id); toast("Booking moved to Bin"); render();
         if (deleted && deleted.calendarEventId) {
