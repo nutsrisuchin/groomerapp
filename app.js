@@ -7,6 +7,12 @@
 /* ---------- constants ---------- */
 const SPECIES = { dog: "🐶", cat: "🐱" };
 const SERVICES = ["Basic", "Hair Styling"];
+// Display-only rename ("Hair Styling" -> "Styling"): SERVICES stays as-is since it's the
+// literal string stored in every booking's services array/serviceHours keys — renaming the
+// stored value would silently break cost/surcharge lookups on every existing booking. This
+// only swaps what staff actually see.
+const SERVICE_DISPLAY_LABELS = { "Hair Styling": "Styling" };
+function serviceLabel(s) { return SERVICE_DISPLAY_LABELS[s] || s; }
 // Suggested breeds for the booking form's breed field (a <datalist>, so typing
 // anything else — mixed breeds, less common breeds — still works fine). Shown list
 // depends on the selected species (dog vs cat).
@@ -912,7 +918,7 @@ function bookingRow(b, opts = {}) {
   const shown = when || new Date(b.start);
   const recur = RECUR[b.recurrence] || RECUR.none;
   const svcText = (b.services && b.services.length)
-    ? b.services.map((s) => `${esc(s)}${b.serviceHours && b.serviceHours[s] ? ` (${b.serviceHours[s]}h)` : ""}`).join(", ")
+    ? b.services.map((s) => `${esc(serviceLabel(s))}${b.serviceHours && b.serviceHours[s] ? ` (${b.serviceHours[s]}h)` : ""}`).join(", ")
     : "";
   const total = bookingDurationHours(b);
   const pet = b.petId ? state.pets.find((p) => p.id === b.petId) : null;
@@ -949,7 +955,7 @@ function bookingRow(b, opts = {}) {
 // Uses the upcoming occurrence for recurring bookings (same date bookingRow shows), not the original start.
 function bookingConfirmMessage(b) {
   const when = nextOccurrence(b) || new Date(b.start);
-  const services = (b.services || []).join(", ");
+  const services = (b.services || []).map(serviceLabel).join(", ");
   return ["confirmed", `N'${b.petName}`, b.breed, services, `${fmtDate(when)} ${fmtTime(when)}`].filter(Boolean).join(" ");
 }
 
@@ -1565,7 +1571,7 @@ function petEditorModal(pet) {
       </select></div>
     <label class="row" style="gap:8px; align-items:center; margin:4px 0 12px">
       <input type="checkbox" id="f-vip" ${p.vip ? "checked" : ""}>
-      <span>⭐ VIP customer — 10% off Basic &amp; Hair Styling</span>
+      <span>⭐ VIP customer — 10% off Basic &amp; Styling</span>
     </label>
     <h3 class="section-title" style="margin-top:6px">Typical time consumed (hours)</h3>
     <div class="field-row">
@@ -1640,7 +1646,7 @@ function historyModal(pet) {
         <select id="h-groomer">${state.groomers.map((g) => `<option value="${g.id}" ${pet.groomerId === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select></div>
     </div>
     <div class="field"><label>Services</label>
-      <div class="tag-list">${SERVICES.map((s) => `<label class="chip"><input type="checkbox" class="h-svc" value="${s}"> ${s}</label>`).join("")}</div></div>
+      <div class="tag-list">${SERVICES.map((s) => `<label class="chip"><input type="checkbox" class="h-svc" value="${s}"> ${esc(serviceLabel(s))}</label>`).join("")}</div></div>
     <div class="field"><label>Notes</label><textarea id="h-notes" placeholder="Coat condition, behavior, products used…"></textarea></div>
     <div class="row" style="justify-content:flex-end; margin-top:8px">
       <button class="btn" data-close-modal>Cancel</button>
@@ -1737,7 +1743,7 @@ function bookingModal(booking, prefillPet) {
         <button type="button" class="btn sm ${hairLength === "short" ? "primary" : ""}" data-hair="short">Short</button>
         <button type="button" class="btn sm ${hairLength === "long" ? "primary" : ""}" data-hair="long">Long</button>
       </div>
-      <div class="help">Basic/Hair Styling prices are a short/long-hair pair — pick one for an exact price instead of a range.</div>
+      <div class="help">Basic/Styling prices are a short/long-hair pair — pick one for an exact price instead of a range.</div>
     </div>
     <div class="field-row">
       <div class="field"><label>Date & time</label><input id="b-start" type="datetime-local" value="${startVal}"></div>
@@ -1756,7 +1762,7 @@ function bookingModal(booking, prefillPet) {
           <label class="svc-row">
             <input type="checkbox" class="b-svc svc-real-checkbox" data-svc="${esc(s)}" ${initialServices.includes(s) ? "checked" : ""}>
             <span class="svc-box" aria-hidden="true"></span>
-            <span class="svc-name">${esc(s)}</span>
+            <span class="svc-name">${esc(serviceLabel(s))}</span>
             <input type="number" class="b-hr" data-svc="${esc(s)}" min="0" step="0.25" placeholder="hrs"
               value="${esc(initialHours[s] ?? "")}" ${initialServices.includes(s) ? "" : "disabled"}>
           </label>`).join("")}
@@ -1888,7 +1894,7 @@ function bookingModal(booking, prefillPet) {
     if (est && est.styleOptions) {
       if (!est.styleOptions.includes(styleLongOverride)) styleLongOverride = est.styleOptions[0];
       pickEl.hidden = false;
-      pickEl.innerHTML = `<span class="faint" style="font-size:12px; align-self:center">Hair Styling price:</span>` +
+      pickEl.innerHTML = `<span class="faint" style="font-size:12px; align-self:center">Styling price:</span>` +
         est.styleOptions.map((p) => `<button type="button" class="btn sm ${p === styleLongOverride ? "primary" : ""}" data-style-price="${p}">฿${p}</button>`).join("");
       $$("[data-style-price]", pickEl).forEach((btn) => btn.onclick = () => {
         styleLongOverride = Number(btn.dataset.stylePrice);
@@ -2247,7 +2253,7 @@ function importRow(c, i) {
       </div>
     </div>
     <div class="row" style="gap:14px; font-size:13px; margin-top:8px">
-      ${SERVICES.map((s) => `<label class="row" style="gap:6px"><input type="checkbox" class="imp-svc" data-idx="${i}" data-svc="${esc(s)}" ${c.services.includes(s) ? "checked" : ""}> ${esc(s)}</label>`).join("")}
+      ${SERVICES.map((s) => `<label class="row" style="gap:6px"><input type="checkbox" class="imp-svc" data-idx="${i}" data-svc="${esc(s)}" ${c.services.includes(s) ? "checked" : ""}> ${esc(serviceLabel(s))}</label>`).join("")}
     </div>
     <div class="field-row" style="margin-top:8px">
       <input id="imp-cost-${i}" type="number" min="0" step="1" placeholder="Total cost ฿ (optional)">

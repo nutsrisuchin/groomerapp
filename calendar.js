@@ -110,10 +110,15 @@
 
   const RRULE_BASE = { weekly: "FREQ=WEEKLY", biweekly: "FREQ=WEEKLY;INTERVAL=2", monthly: "FREQ=MONTHLY" };
 
+  // Display-only rename, mirrored from app.js's SERVICE_DISPLAY_LABELS — bookings still store
+  // "Hair Styling" internally, this module just shouldn't reach into app.js to stay isolated.
+  const SERVICE_DISPLAY_LABELS = { "Hair Styling": "Styling" };
+
   function buildEventBody(booking, groomer) {
     const hours = Object.values(booking.serviceHours || {}).reduce((a, v) => a + (Number(v) || 0), 0) || 1;
     const end = new Date(new Date(booking.start).getTime() + hours * 3600 * 1000).toISOString();
-    const parts = [booking.petName, booking.breed, (booking.services || []).join(", "), booking.notes].filter(Boolean);
+    const serviceText = (booking.services || []).map((s) => SERVICE_DISPLAY_LABELS[s] || s).join(", ");
+    const parts = [booking.petName, booking.breed, serviceText, booking.notes].filter(Boolean);
     // Google rejects the request outright ("Missing time zone definition") if it can't be
     // certain the dateTime is unambiguous — always pin an explicit IANA zone as a safety
     // net, even though booking.start should normally already carry a "Z"/UTC offset.
