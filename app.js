@@ -92,14 +92,18 @@ function tierLongPrice(tier, override) {
   if (!Array.isArray(v)) return v;
   return v.includes(Number(override)) ? Number(override) : v[0];
 }
+// VIP pets get 10% off Basic + Hair Styling (not Add-on), applied after any premium-breed
+// surcharge — e.g. Basic ฿500 + ฿100 breed surcharge = ฿600, VIP price ฿540.
+const VIP_DISCOUNT_RATE = 0.10;
 // Estimated total for the given services at this pet's weight tier. Returns null if
 // weight is unknown or no priced service is selected. Pass hairLength ("short"/"long") to
 // collapse the short/long pair to that exact figure; omit it to get the full range
 // (min/max), e.g. for a quick display before the user has picked one. `breed` drives the
 // premium-breed surcharge (dogs only). `styleLongOverride` picks which exact price to use
 // when a cat's long Hair Styling price is a multi-option range (see tierLongPrice above) —
-// defaults to the lowest option when omitted or not one of the valid options.
-function estimateCost(weightKg, services, species, hairLength, breed, styleLongOverride) {
+// defaults to the lowest option when omitted or not one of the valid options. `vip` applies
+// the 10% VIP discount; the returned `regular` field is the pre-discount price for reference.
+function estimateCost(weightKg, services, species, hairLength, breed, styleLongOverride, vip) {
   const tier = tierForWeight(weightKg, species);
   if (!tier || !services || !services.length) return null;
   const idx = hairLength === "long" ? 1 : hairLength === "short" ? 0 : null;
@@ -115,14 +119,16 @@ function estimateCost(weightKg, services, species, hairLength, breed, styleLongO
     const stylePart = services.includes("Hair Styling")
       ? (idx === 1 ? tierLongPrice(tier, styleLongOverride) : tier.fullGroom[0])
       : 0;
-    const exact = basicPart + stylePart + surcharge;
+    const regular = basicPart + stylePart + surcharge;
+    const exact = vip ? Math.round(regular * (1 - VIP_DISCOUNT_RATE)) : regular;
     return {
-      tier: tier.name, min: exact, max: exact, label: `฿${exact}`, surcharge,
+      tier: tier.name, min: exact, max: exact, label: `฿${exact}`, surcharge, regular, vip: !!vip,
       styleOptions: (idx === 1 && services.includes("Hair Styling")) ? styleOptions : null,
       styleLongPrice: (idx === 1 && services.includes("Hair Styling")) ? stylePart : null,
     };
   }
-  return { tier: tier.name, min, max, label: min === max ? `฿${min}` : `฿${min}–${max}`, surcharge, styleOptions: null, styleLongPrice: null };
+  if (vip) { min = Math.round(min * (1 - VIP_DISCOUNT_RATE)); max = Math.round(max * (1 - VIP_DISCOUNT_RATE)); }
+  return { tier: tier.name, min, max, label: min === max ? `฿${min}` : `฿${min}–${max}`, surcharge, regular: null, vip: !!vip, styleOptions: null, styleLongPrice: null };
 }
 // Palette offered when creating/editing a groomer — the full set of Google Calendar
 // event colors (exact hexes), so a groomer's swatch here matches their events later.
@@ -671,7 +677,7 @@ function viewHome() {
 
   return `
   <div class="page-head">
-    <div><h1>Welcome back 🐾</h1><div class="muted">Your Grooming Partner.</div></div>
+    <div><h1>Welcome back 🐾</h1><div class="muted">Your Grooming Partner</div></div>
     <button class="btn primary" data-action="new-booking">＋ New Booking</button>
   </div>
 
@@ -743,7 +749,7 @@ function petCard(p) {
   <div class="card pet-card" data-open-pet="${p.id}">
     <div class="photo" ${photo}><span class="species">${SPECIES[p.species] || "🐾"}</span></div>
     <div class="body">
-      <p class="name">${esc(p.name)}</p>
+      <p class="name">${esc(p.name)}${p.vip ? ` <span class="vip-badge">⭐ VIP</span>` : ""}</p>
       <div class="breed">${esc(p.breed || "Unknown breed")}</div>
       <div class="meta">
         <span class="dot" style="background:${groomerColor(p.groomerId)}"></span>${esc(groomerName(p.groomerId))}
@@ -770,7 +776,7 @@ function viewPetDetail() {
       <div class="grow">
         <div class="spread">
           <div>
-            <h1 style="margin:0 0 2px">${esc(p.name)} <span style="font-size:22px">${SPECIES[p.species] || ""}</span></h1>
+            <h1 style="margin:0 0 2px">${esc(p.name)} <span style="font-size:22px">${SPECIES[p.species] || ""}</span>${p.vip ? ` <span class="vip-badge">⭐ VIP</span>` : ""}</h1>
             <div class="muted">${esc(p.breed || "Unknown breed")}${p.weight ? ` · ${esc(p.weight)} kg` : ""}</div>
             <div class="groomer-tag" style="margin-top:8px"><span class="dot" style="background:${groomerColor(p.groomerId)}"></span>${esc(groomerName(p.groomerId))}</div>
           </div>
@@ -894,7 +900,7 @@ function bookingRow(b, opts = {}) {
     : "";
   const total = bookingDurationHours(b);
   const pet = b.petId ? state.pets.find((p) => p.id === b.petId) : null;
-  const estCost = pet ? estimateCost(pet.weight, b.services, pet.species, b.hairLength || "long", b.breed) : null;
+  const estCost = pet ? estimateCost(pet.weight, b.services, pet.species, b.hairLength || "long", b.breed, null, pet.vip) : null;
   const costLabel = (b.totalCost != null && b.totalCost !== "") ? `฿${Number(b.totalCost).toLocaleString()}` : (estCost ? estCost.label : null);
   const statusBadge = b.status === "completed" ? ` <span class="status-badge status-completed">✓ Completed</span>`
     : b.status === "cancelled" ? ` <span class="status-badge status-cancelled">✕ Cancelled</span>` : "";
@@ -937,7 +943,7 @@ function bookingConfirmMessage(b) {
 // just keeps that value; leaving it genuinely blank clears it, same as the booking form.
 function completeBookingModal(b) {
   const pet = b.petId ? state.pets.find((p) => p.id === b.petId) : null;
-  const est = pet ? estimateCost(pet.weight, b.services, pet.species, b.hairLength || "long", b.breed) : null;
+  const est = pet ? estimateCost(pet.weight, b.services, pet.species, b.hairLength || "long", b.breed, null, pet.vip) : null;
   const prefill = (b.totalCost != null && b.totalCost !== "") ? b.totalCost : (est ? est.min : "");
   openModal(`
     <h2>Complete booking</h2>
@@ -1203,7 +1209,7 @@ function monthKeyOf(ms) { return dateKey(new Date(ms)).slice(0, 7); }
 function bookingRevenue(b) {
   if (b.totalCost != null && b.totalCost !== "") return Number(b.totalCost);
   const pet = b.petId ? state.pets.find((p) => p.id === b.petId) : null;
-  const est = pet ? estimateCost(pet.weight, b.services, pet.species, b.hairLength || "long", b.breed) : null;
+  const est = pet ? estimateCost(pet.weight, b.services, pet.species, b.hairLength || "long", b.breed, null, pet.vip) : null;
   return est ? est.min : 0;
 }
 
@@ -1540,6 +1546,10 @@ function petEditorModal(pet) {
       <select id="f-groomer"><option value="">— Unassigned —</option>
         ${state.groomers.map((g) => `<option value="${g.id}" ${p.groomerId === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}
       </select></div>
+    <label class="row" style="gap:8px; align-items:center; margin:4px 0 12px">
+      <input type="checkbox" id="f-vip" ${p.vip ? "checked" : ""}>
+      <span>⭐ VIP customer — 10% off Basic &amp; Hair Styling</span>
+    </label>
     <h3 class="section-title" style="margin-top:6px">Typical time consumed (hours)</h3>
     <div class="field-row">
       <div class="field"><label>🚿 Basic</label><input id="f-shower" type="number" min="0" step="0.25" value="${esc(t.shower ?? "")}"></div>
@@ -1580,6 +1590,7 @@ function petEditorModal(pet) {
       breed: $("#f-breed").value.trim(),
       weight: $("#f-weight").value.trim(),
       groomerId: $("#f-groomer").value || null,
+      vip: $("#f-vip").checked,
       times: {
         shower: numOrNull($("#f-shower").value),
         styling: numOrNull($("#f-styling").value),
@@ -1850,7 +1861,8 @@ function bookingModal(booking, prefillPet) {
 
     // hairLength always has a value (defaults "long"), so this is always the exact price —
     // never a range or an in-between average.
-    const est = services.length ? estimateCost(weight, services, species, hairLength, breed, styleLongOverride) : null;
+    const vip = !!(matchedPet && matchedPet.vip);
+    const est = services.length ? estimateCost(weight, services, species, hairLength, breed, styleLongOverride, vip) : null;
     if (services.length && !est) { el.textContent = "Add the pet's weight to estimate cost."; pickEl.hidden = true; return; }
 
     // A cat's long Hair Styling price can be one of a few exact options instead of a single
@@ -1873,6 +1885,7 @@ function bookingModal(booking, prefillPet) {
     const parts = [];
     if (est) parts.push(`${est.label} (${est.tier})`);
     if (est && est.surcharge) parts.push(`incl. ฿${est.surcharge} breed surcharge`);
+    if (est && est.vip && est.regular != null) parts.push(`⭐ VIP -10% · regular ฿${est.regular.toLocaleString()}`);
     if (addOnOn && addOnPrice) parts.push(`+ ฿${addOnPrice.toLocaleString()} add-on`);
     el.innerHTML = `Estimated: ฿${total.toLocaleString()}${parts.length ? ` — ${parts.join(" ")}` : ""}${costTouched ? ' · <button class="link" id="use-estimate" type="button">use this</button>' : ""}`;
     if (!costTouched) $("#b-cost").value = total;
