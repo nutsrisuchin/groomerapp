@@ -153,7 +153,7 @@ const GROOMER_COLORS = [
 ];
 
 /* ---------- state ---------- */
-const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], deletedBookings: [], scheduleDate: "", scheduleHiddenGroomers: [], financialMonth: "", upcomingRange: "day", search: { name: "", breed: "" } };
+const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], deletedBookings: [], scheduleDate: "", scheduleHiddenGroomers: [], financialMonth: "", upcomingRange: "day", bookingsOpen: { completed: false, cancelled: false, bin: false }, search: { name: "", breed: "" } };
 const getCalendarId = () => (state.settings.find((s) => s.id === "calendar") || {}).calendarId || "";
 const getCustomBreeds = () => (state.settings.find((s) => s.id === "breeds") || {}).list || [];
 
@@ -890,18 +890,18 @@ function viewBookings() {
       : emptyBlock("📅", "No upcoming bookings in this range", "Try a wider range above, or create a booking — it's ready to sync to Google Calendar later.", "new-booking", "New booking")}
   </div>
 
-  <details class="card bookings-collapsible" style="margin-bottom:16px">
+  <details class="card bookings-collapsible" data-open-key="completed" style="margin-bottom:16px" ${state.bookingsOpen.completed ? "open" : ""}>
     <summary>Completed Bookings (${completed.length})</summary>
     ${completed.length ? completed.map((b) => bookingRow(b)).join("") : emptyInline("No completed bookings yet.")}
   </details>
 
-  <details class="card bookings-collapsible" ${canDelete() ? 'style="margin-bottom:16px"' : ""}>
+  <details class="card bookings-collapsible" data-open-key="cancelled" ${canDelete() ? 'style="margin-bottom:16px"' : ""} ${state.bookingsOpen.cancelled ? "open" : ""}>
     <summary>Cancelled Bookings (${cancelled.length})</summary>
     ${cancelled.length ? cancelled.map((b) => bookingRow(b)).join("") : emptyInline("No cancelled bookings yet.")}
   </details>
 
   ${canDelete() ? `
-  <details class="card bookings-collapsible">
+  <details class="card bookings-collapsible" data-open-key="bin" ${state.bookingsOpen.bin ? "open" : ""}>
     <summary>🗑 Bin (${bin.length})</summary>
     ${bin.length ? bin.map((b) => bookingRow(b, { trashActions: true })).join("") : emptyInline("Nothing in the bin.")}
   </details>` : ""}`;
@@ -1000,6 +1000,7 @@ function completeBookingModal(b) {
     const costVal = $("#cb-cost").value;
     const rec = { ...b, status: "completed", completedAt: Date.now(), totalCost: costVal === "" ? null : Number(costVal) };
     await DB.put("bookings", rec); upsertLocal("bookings", rec);
+    state.bookingsOpen.completed = true; // so the booking just completed is visible without re-expanding
     closeModal(); toast("Booking completed"); render();
     logActivity("booking", "completed", `${b.petName}${b.breed ? ` (${b.breed})` : ""} with ${groomerName(b.groomerId)}`);
   };
@@ -2496,6 +2497,11 @@ function bindView() {
   const qn = $("#q-name"), qb = $("#q-breed");
   if (qn) qn.oninput = () => { state.search.name = qn.value; renderHomeResults(); };
   if (qb) qb.oninput = () => { state.search.breed = qb.value; renderHomeResults(); };
+
+  // Completed/Cancelled/Bin collapsibles on Bookings — remember open/closed across re-renders
+  // (completing/editing/cancelling a booking re-renders the whole page, which would otherwise
+  // reset every <details> to closed and lose the staff member's place mid-review).
+  $$("[data-open-key]").forEach((el) => el.ontoggle = () => { state.bookingsOpen[el.dataset.openKey] = el.open; });
 
   // schedule view-mode dropdown + groomer visibility toggles
   const schedMode = $("#sched-mode-select");
