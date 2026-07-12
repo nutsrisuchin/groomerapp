@@ -1395,7 +1395,7 @@ function scheduleBodyDay(dateStr) {
       ${gridColumns.map((col) => `
         <div class="schedule-col">
           <div class="schedule-col-head"><span class="dot" style="background:${col.groomer.color}"></span>${esc(col.groomer.name)}</div>
-          <div class="schedule-col-body" style="height:${gridHeight}px">
+          <div class="schedule-col-body" data-date="${dateStr}" data-groomer-id="${col.groomer.id || ""}" style="height:${gridHeight}px">
             ${col.items.map((it) => scheduleBlockHtml(it, openMin, closeMin, col.groomer.color)).join("")}
           </div>
         </div>`).join("")}
@@ -1450,7 +1450,7 @@ function scheduleBodyWeek(dateStr) {
             <div class="day-name">${DAY_NAMES_SHORT[col.dow]}</div>
             <span class="day-num ${col.dateStr === today ? "today" : ""}">${new Date(col.dateStr + "T00:00:00").getDate()}</span>
           </div>
-          <div class="schedule-col-body" style="height:${gridHeight}px">
+          <div class="schedule-col-body" data-date="${col.dateStr}" style="height:${gridHeight}px">
             ${col.closed ? `<div class="closed-overlay">Closed</div>`
               : col.items.map((it) => scheduleBlockHtml(it, openMin, closeMin, groomerColor(it.booking.groomerId))).join("")}
             ${(col.dateStr === now.dateStr && now.min >= openMin && now.min <= closeMin)
@@ -1689,10 +1689,13 @@ function historyModal(pet) {
 }
 
 /* ---------- Booking editor ---------- */
-function bookingModal(booking, prefillPet) {
+// slotPrefill (only used for a brand-new booking, never when editing): { start: Date,
+// groomerId: string|null } — set when opened by clicking an empty spot on the Schedule
+// grid, so the date/time/groomer are already filled in instead of defaulting to "now".
+function bookingModal(booking, prefillPet, slotPrefill) {
   const b = booking || {};
   const now = new Date(Date.now() + 60 * 60 * 1000); now.setMinutes(0, 0, 0);
-  const startVal = b.start ? toLocalInput(b.start) : toLocalInput(now);
+  const startVal = b.start ? toLocalInput(b.start) : toLocalInput((slotPrefill && slotPrefill.start) || now);
 
   // Resolve the initial matched pet: editing an existing booking, or opened via "Book" on a pet profile
   let matchedPet = prefillPet || (b.petId ? state.pets.find((p) => p.id === b.petId) : null) || null;
@@ -1706,8 +1709,10 @@ function bookingModal(booking, prefillPet) {
   const initialName = b.petName || (matchedPet ? matchedPet.name : "");
   const initialBreed = b.breed || (matchedPet ? matchedPet.breed : "");
   // Editing an existing booking: preserve an explicit "no preference" (null) rather than
-  // silently substituting the pet's usual groomer. New booking: prefill from the pet as before.
-  const initialGroomer = booking ? (b.groomerId ?? "none") : (b.groomerId || (matchedPet ? matchedPet.groomerId : "") || "");
+  // silently substituting the pet's usual groomer. New booking: prefill from the pet, then
+  // from the clicked Schedule slot's groomer column, as before.
+  const initialGroomer = booking ? (b.groomerId ?? "none")
+    : (b.groomerId || (matchedPet ? matchedPet.groomerId : "") || (slotPrefill ? (slotPrefill.groomerId || "none") : ""));
   const initialWeight = matchedPet ? (matchedPet.weight || "") : "";
   const initialSpecies = matchedPet ? (matchedPet.species || "dog") : "dog";
   const initialServices = b.services || [];
@@ -2509,6 +2514,25 @@ function bindView() {
   // (completing/editing/cancelling a booking re-renders the whole page, which would otherwise
   // reset every <details> to closed and lose the staff member's place mid-review).
   $$("[data-open-key]").forEach((el) => el.ontoggle = () => { state.bookingsOpen[el.dataset.openKey] = el.open; });
+
+  // Click an empty spot on the Schedule grid (Day/Week) to open "New booking" prefilled with
+  // that date/time (snapped to the nearest 15 min) and groomer column, if any. Existing
+  // booking blocks (data-action="edit-booking") and the "closed" overlay sit on top and
+  // capture their own clicks first, so e.target !== el there — this only fires on the empty
+  // background itself.
+  $$(".schedule-col-body").forEach((el) => {
+    el.onclick = (e) => {
+      if (e.target !== el || !el.dataset.date) return;
+      const hours = getBusinessHours();
+      const openMin = toMinutes(hours.open), closeMin = toMinutes(hours.close);
+      const offsetY = e.clientY - el.getBoundingClientRect().top;
+      const rawMin = openMin + (offsetY / PX_PER_HOUR) * 60;
+      const snappedMin = Math.max(openMin, Math.min(closeMin, Math.round(rawMin / 15) * 15));
+      const start = new Date(`${el.dataset.date}T00:00:00`);
+      start.setHours(Math.floor(snappedMin / 60), snappedMin % 60, 0, 0);
+      bookingModal(null, null, { start, groomerId: el.dataset.groomerId || null });
+    };
+  });
 
   // schedule view-mode dropdown + groomer visibility toggles
   const schedMode = $("#sched-mode-select");
