@@ -568,6 +568,15 @@ function bookingDurationHours(b) {
 /* ---------- lookups ---------- */
 const groomerById = (id) => state.groomers.find((g) => g.id === id);
 function groomerColor(id) { const g = groomerById(id); return g ? g.color : "#c3c8d4"; }
+// Light background tint for a booking row (kept subtle so black text stays easily readable
+// over it) — same alpha level already used for the status-completed/cancelled badge pills.
+function hexToRgba(hex, alpha) {
+  const h = (hex || "").replace("#", "");
+  const r = parseInt(h.substring(0, 2), 16) || 0;
+  const g = parseInt(h.substring(2, 4), 16) || 0;
+  const b = parseInt(h.substring(4, 6), 16) || 0;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
 function groomerName(id) { const g = groomerById(id); return g ? g.name : "No preference"; }
 const groomerByCalendarColorId = (colorId) => colorId ? state.groomers.find((g) => g.calendarColorId === colorId) : null;
 function findMatchingPets(query, limit = 6) {
@@ -935,15 +944,16 @@ function bookingRow(b, opts = {}) {
     ? b.services.map((s) => `${esc(serviceLabel(s))}${b.serviceHours && b.serviceHours[s] ? ` (${b.serviceHours[s]}h)` : ""}`).join(", ")
     : "";
   const total = bookingDurationHours(b);
+  const endTime = total ? new Date(shown.getTime() + total * 3600 * 1000) : null;
   const pet = b.petId ? state.pets.find((p) => p.id === b.petId) : null;
   const estCost = pet ? estimateCost(pet.weight, b.services, pet.species, b.hairLength || "long", b.breed, null, pet.vip) : null;
   const costLabel = (b.totalCost != null && b.totalCost !== "") ? `฿${Number(b.totalCost).toLocaleString()}` : (estCost ? estCost.label : null);
   const statusBadge = b.status === "completed" ? ` <span class="status-badge status-completed">✓ Completed</span>`
     : b.status === "cancelled" ? ` <span class="status-badge status-cancelled">✕ Cancelled</span>` : "";
   return `
-  <div class="booking">
+  <div class="booking" style="background:${hexToRgba(groomerColor(b.groomerId), 0.12)}">
     <div class="stripe" style="background:${groomerColor(b.groomerId)}"></div>
-    <div class="when"><div class="date">${fmtDate(shown)}</div><div class="time">${ended ? "Series ended" : fmtTime(shown)}</div></div>
+    <div class="when"><div class="date">${fmtDate(shown)}</div><div class="time">${ended ? "Series ended" : (endTime ? `${fmtTime(shown)}–${fmtTime(endTime)}` : fmtTime(shown))}</div></div>
     <div class="who">
       <div class="pet">${esc(b.petName)}${b.breed ? ` · <span class="muted" style="font-weight:500">${esc(b.breed)}</span>` : ""}${statusBadge}</div>
       <div class="sub">
