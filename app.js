@@ -1339,6 +1339,33 @@ function layoutLanes(items) {
   return placed;
 }
 
+// Week view mixes every groomer's bookings into one day-column (unlike Day view, which
+// gives each groomer their own dedicated column) — plain layoutLanes() assigns lanes by
+// first-available-by-time, so the same groomer can land in a different lane (and therefore
+// a different horizontal position) on different days, making it hard to visually track one
+// groomer's slots down the week. This assigns lanes by a FIXED groomer order instead (the
+// same order as the "My groomers" sidebar list, "No preference" last), with the lane count
+// held constant for the whole day so a groomer's color always renders in the same band.
+function scheduleGroomerOrder() {
+  return [...visibleGroomers().map((g) => g.id), null];
+}
+function layoutLanesByGroomer(items) {
+  const order = scheduleGroomerOrder();
+  const laneOf = (gid) => { const i = order.indexOf(gid); return i === -1 ? order.length : i; };
+  const sorted = [...items].sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin);
+  const placed = sorted.map((it) => ({ ...it, lane: laneOf(it.booking.groomerId) }));
+  // Same-groomer double-bookings (rare) would otherwise fully overlap in the same lane —
+  // push any later, still-overlapping duplicate one lane over instead of hiding the conflict.
+  placed.forEach((it, i) => {
+    const bumped = placed.slice(0, i)
+      .filter((o) => o.lane === it.lane && o.startMin < it.endMin && o.endMin > it.startMin).length;
+    it.lane += bumped;
+  });
+  const laneCount = Math.max(order.length, ...placed.map((it) => it.lane + 1));
+  placed.forEach((it) => { it.laneCount = laneCount; });
+  return placed;
+}
+
 function scheduleBlockHtml(it, openMin, closeMin, color) {
   const top = ((Math.max(it.startMin, openMin) - openMin) / 60) * PX_PER_HOUR;
   const rawH = ((Math.min(it.endMin, closeMin) - Math.max(it.startMin, openMin)) / 60) * PX_PER_HOUR;
@@ -1434,7 +1461,7 @@ function scheduleBodyWeek(dateStr) {
   const cols = days.map((d) => {
     const dow = new Date(d + "T00:00:00").getDay();
     const closed = (hours.closedDays || []).includes(dow);
-    const items = closed ? [] : layoutLanes(bookingsOnDate(d).filter((it) => !hiddenIds.includes(it.booking.groomerId)));
+    const items = closed ? [] : layoutLanesByGroomer(bookingsOnDate(d).filter((it) => !hiddenIds.includes(it.booking.groomerId)));
     return { dateStr: d, dow, closed, items };
   });
 
