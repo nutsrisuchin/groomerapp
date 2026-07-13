@@ -153,7 +153,7 @@ const GROOMER_COLORS = [
 ];
 
 /* ---------- state ---------- */
-const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], deletedBookings: [], scheduleDate: "", scheduleHiddenGroomers: [], scheduleMiniCalOpen: false, financialMonth: "", upcomingRange: "day", bookingsOpen: { completed: false, cancelled: false, bin: false }, search: { name: "", breed: "" } };
+const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], deletedBookings: [], scheduleDate: "", scheduleHiddenGroomers: [], scheduleMiniCalOpen: false, financialStart: "", financialEnd: "", financialCalMonth: "", financialCalOpen: false, upcomingRange: "day", bookingsOpen: { completed: false, cancelled: false, bin: false }, search: { name: "", breed: "" } };
 const getCalendarId = () => (state.settings.find((s) => s.id === "calendar") || {}).calendarId || "";
 const getCustomBreeds = () => (state.settings.find((s) => s.id === "breeds") || {}).list || [];
 
@@ -1312,7 +1312,16 @@ function viewSchedule() {
 
 function fmtMonthOnly(monthKey) { return new Date(monthKey + "-01T00:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }); }
 function addMonthsToMonthKey(monthKey, n) { return addMonthsKey(monthKey + "-01", n).slice(0, 7); }
-function monthKeyOf(ms) { return dateKey(new Date(ms)).slice(0, 7); }
+function lastDayOfMonthKey(monthKey) {
+  const [y, m] = monthKey.split("-").map(Number);
+  return `${monthKey}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
+}
+function fmtDateFull(key) { return new Date(key + "T00:00:00").toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }); }
+// "14 ก.ค. 2026" for a single day, "1 ก.ค. – 14 ก.ค. 2026" for a range. Kept fully spelled on
+// both ends (even within one month) so it's never ambiguous across month/year boundaries.
+function fmtFinancialRange(start, end) {
+  return start === end ? fmtDateFull(start) : `${fmtDateFull(start)} – ${fmtDateFull(end)}`;
+}
 
 // Revenue for a completed/cancelled-irrelevant booking: the staff-entered total if set,
 // otherwise the exact weight-tier estimate (defaults to long-hair pricing if the booking
@@ -1324,12 +1333,52 @@ function bookingRevenue(b) {
   return est ? est.min : 0;
 }
 
+// Mini-calendar for the Financial date-range picker, with the selected day/range highlighted.
+// Navigates by month via fin-cal-prev/next; each day is a fin-pick-day target.
+function financialMiniCal(rangeStart, rangeEnd) {
+  const calMonth = state.financialCalMonth || todayKey().slice(0, 7);
+  return `
+  <div class="mini-cal">
+    <div class="mini-cal-head">
+      <strong>${fmtMonthOnly(calMonth)}</strong>
+      <div class="row" style="gap:2px">
+        <button class="icon-btn" data-action="fin-cal-prev" aria-label="Previous month">‹</button>
+        <button class="icon-btn" data-action="fin-cal-next" aria-label="Next month">›</button>
+      </div>
+    </div>
+    <div class="mini-cal-grid">
+      ${DAY_NAMES_SHORT.map((d) => `<div class="mini-dow">${d[0]}</div>`).join("")}
+      ${monthGridDates(calMonth + "-01").map((d) => {
+        const inMonth = sameMonth(d, calMonth + "-01");
+        const isToday = d === todayKey();
+        const inRange = d >= rangeStart && d <= rangeEnd;
+        const isEnd = d === rangeStart || d === rangeEnd;
+        return `<button class="mini-day ${inMonth ? "" : "outside"} ${isToday ? "today" : ""} ${inRange ? "in-range" : ""} ${isEnd ? "selected" : ""}" data-action="fin-pick-day" data-date="${d}">${new Date(d + "T00:00:00").getDate()}</button>`;
+      }).join("")}
+    </div>
+    <div class="help" style="margin-top:8px">Click one day for a single day, or a second day to set a range.</div>
+  </div>`;
+}
+
 function viewFinancial() {
-  if (!state.financialMonth) state.financialMonth = todayKey().slice(0, 7);
-  const monthKey = state.financialMonth;
+  // Range model: financialStart/End are day keys (YYYY-MM-DD). A single-day selection leaves
+  // financialEnd blank until a second day is picked, so one click = one day. Default to the
+  // current calendar month on first open.
+  if (!state.financialStart) {
+    const mk = todayKey().slice(0, 7);
+    state.financialStart = mk + "-01";
+    state.financialEnd = lastDayOfMonthKey(mk);
+  }
+  if (!state.financialCalMonth) state.financialCalMonth = (state.financialEnd || state.financialStart).slice(0, 7);
+  const rangeStart = state.financialStart;
+  const rangeEnd = state.financialEnd || state.financialStart;
   // Grouped by when a booking was marked complete (completedAt), not its scheduled date —
   // a recurring booking's original date can be far in the past by the time it's resolved.
-  const completed = state.bookings.filter((b) => b.status === "completed" && b.completedAt && monthKeyOf(b.completedAt) === monthKey);
+  const completed = state.bookings.filter((b) => {
+    if (b.status !== "completed" || !b.completedAt) return false;
+    const k = dateKey(new Date(b.completedAt));
+    return k >= rangeStart && k <= rangeEnd;
+  });
   const totalRevenue = completed.reduce((sum, b) => sum + bookingRevenue(b), 0);
 
   const byGroomer = {};
@@ -1354,13 +1403,15 @@ function viewFinancial() {
 
   const toolbar = `
   <div class="card pad fin-toolbar">
-    <div class="row">
-      <button class="btn sm" data-action="fin-today">This month</button>
-      <button class="icon-btn" data-action="fin-prev" aria-label="Previous month">‹</button>
-      <button class="icon-btn" data-action="fin-next" aria-label="Next month">›</button>
-      <div class="gcal-title">${fmtMonthOnly(monthKey)}</div>
+    <div class="row" style="flex-wrap:wrap; gap:8px">
+      <button class="btn sm" data-action="fin-preset-today">Today</button>
+      <button class="btn sm" data-action="fin-preset-week">This week</button>
+      <button class="btn sm" data-action="fin-preset-month">This month</button>
     </div>
-    <input type="month" id="fin-month-picker" value="${monthKey}">
+    <div class="row" style="position:relative">
+      <div class="gcal-title" data-action="fin-toggle-cal" style="cursor:pointer">📅 ${fmtFinancialRange(rangeStart, rangeEnd)}</div>
+      ${state.financialCalOpen ? `<div class="mini-cal-popover fin-cal-popover">${financialMiniCal(rangeStart, rangeEnd)}</div>` : ""}
+    </div>
   </div>`;
 
   return `
@@ -1378,13 +1429,13 @@ function viewFinancial() {
   </div>
   <div class="card pad" style="margin-top:16px">
     <div class="section-title">By groomer</div>
-    ${groomerRows || emptyInline("No completed bookings this month yet.")}
+    ${groomerRows || emptyInline("No completed bookings in this range yet.")}
   </div>
   <div class="card bookings-section" style="margin-top:16px">
     <div class="card pad" style="padding-bottom:0; border:0"><div class="section-title">All Bookings (${completed.length})</div></div>
     ${completed.length
       ? [...completed].sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0)).map((b) => bookingRow(b)).join("")
-      : emptyBlock("📅", "No completed bookings this month", "Once a booking is marked complete in this month, it'll show up here.")}
+      : emptyBlock("📅", "No completed bookings in this range", "Pick a different day or period above, or complete a booking to see it here.")}
   </div>`;
 }
 
@@ -2661,10 +2712,6 @@ function bindView() {
     render();
   });
 
-  // financial month picker
-  const finMonth = $("#fin-month-picker");
-  if (finMonth) finMonth.onchange = () => { if (finMonth.value) { state.financialMonth = finMonth.value; render(); } };
-
   // actions
   $$("[data-action]").forEach((el) => {
     // A <select> reports its choice via "change", not "click" — and el.dataset alone
@@ -2847,9 +2894,37 @@ async function handleAction(action, data) {
     case "mini-cal-prev": state.scheduleDate = addMonthsKey(state.scheduleDate || todayKey(), -1); render(); break;
     case "mini-cal-next": state.scheduleDate = addMonthsKey(state.scheduleDate || todayKey(), 1); render(); break;
     case "edit-hours": hoursModal(); break;
-    case "fin-prev": state.financialMonth = addMonthsToMonthKey(state.financialMonth || todayKey().slice(0, 7), -1); render(); break;
-    case "fin-next": state.financialMonth = addMonthsToMonthKey(state.financialMonth || todayKey().slice(0, 7), 1); render(); break;
-    case "fin-today": state.financialMonth = todayKey().slice(0, 7); render(); break;
+    case "fin-preset-today": {
+      const t = todayKey();
+      state.financialStart = t; state.financialEnd = t;
+      state.financialCalMonth = t.slice(0, 7); state.financialCalOpen = false; render();
+    } break;
+    case "fin-preset-week": {
+      const ws = startOfWeekKey(todayKey());
+      state.financialStart = ws; state.financialEnd = addDaysKey(ws, 6);
+      state.financialCalMonth = state.financialEnd.slice(0, 7); state.financialCalOpen = false; render();
+    } break;
+    case "fin-preset-month": {
+      const mk = todayKey().slice(0, 7);
+      state.financialStart = mk + "-01"; state.financialEnd = lastDayOfMonthKey(mk);
+      state.financialCalMonth = mk; state.financialCalOpen = false; render();
+    } break;
+    case "fin-toggle-cal": state.financialCalOpen = !state.financialCalOpen; render(); break;
+    case "fin-cal-prev": state.financialCalMonth = addMonthsToMonthKey(state.financialCalMonth || todayKey().slice(0, 7), -1); render(); break;
+    case "fin-cal-next": state.financialCalMonth = addMonthsToMonthKey(state.financialCalMonth || todayKey().slice(0, 7), 1); render(); break;
+    case "fin-pick-day": {
+      // First click (or clicking after a complete range) starts a fresh single-day pick;
+      // the next click extends it into a range, auto-ordering the two ends. A single day
+      // stays valid on its own (financialEnd left blank → treated as start).
+      if (state.financialEnd || !state.financialStart) {
+        state.financialStart = data.date; state.financialEnd = "";
+      } else if (data.date < state.financialStart) {
+        state.financialEnd = state.financialStart; state.financialStart = data.date; state.financialCalOpen = false;
+      } else {
+        state.financialEnd = data.date; state.financialCalOpen = false;
+      }
+      render();
+    } break;
     case "set-upcoming-range": state.upcomingRange = data.value; render(); break;
     case "clear-search": state.search = { name: "", breed: "" }; render(); break;
     case "go-pets": go("pets"); break;
@@ -2871,6 +2946,11 @@ document.addEventListener("click", (e) => {
   if (!state.scheduleMiniCalOpen) return;
   if (e.target.closest(".mini-cal-popover") || e.target.closest('[data-action="toggle-mini-cal"]')) return;
   state.scheduleMiniCalOpen = false; render();
+});
+document.addEventListener("click", (e) => {
+  if (!state.financialCalOpen) return;
+  if (e.target.closest(".mini-cal-popover") || e.target.closest('[data-action="fin-toggle-cal"]')) return;
+  state.financialCalOpen = false; render();
 });
 
 // Mobile nav dropdown (the tab bar collapses behind a hamburger under 820px)

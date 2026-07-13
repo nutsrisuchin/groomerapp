@@ -290,10 +290,10 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 
 /* ---------- Financial ---------- */
 .fin-toolbar{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap}
-.fin-toolbar input[type=month]{
-  width:auto; padding:8px 12px; border:1px solid var(--line);
-  border-radius:var(--radius-sm); background:var(--surface); color:var(--ink);
-}
+/* Days strictly between the two ends of the selected range get a soft square tint (so the
+   band reads as contiguous); the two ends themselves keep .mini-day.selected's solid brand
+   circle. :not(.selected) so the end days aren't overridden by this higher-specificity rule. */
+.fin-cal-popover .mini-day.in-range:not(.selected){background:rgba(124,92,255,.14); border-radius:0}
 .fin-stats{display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:16px; margin-top:16px}
 .fin-stat-value{font-size:28px; font-weight:800; margin-top:4px}
 .fin-groomer-row{display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid var(--line)}
