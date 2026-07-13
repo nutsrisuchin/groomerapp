@@ -1343,9 +1343,11 @@ function layoutLanes(items) {
 // gives each groomer their own dedicated column) — plain layoutLanes() assigns lanes by
 // first-available-by-time, so the same groomer can land in a different lane (and therefore
 // a different horizontal position) on different days, making it hard to visually track one
-// groomer's slots down the week. This assigns lanes by a FIXED groomer order instead (the
-// same order as the "My groomers" sidebar list, "No preference" last), with the lane count
-// held constant for the whole day so a groomer's color always renders in the same band.
+// groomer's slots down the week. This assigns lanes by a fixed groomer order instead (the
+// same order as the "My groomers" sidebar list, "No preference" last), so a groomer's color
+// always renders in the same relative position whenever they appear — but only reserves
+// lanes for groomers who actually have a booking THAT day, not the full roster, so a light
+// day with one or two groomers still gets full-width blocks instead of mostly-empty slivers.
 function scheduleGroomerOrder() {
   return [...visibleGroomers().map((g) => g.id), null];
 }
@@ -1353,7 +1355,10 @@ function layoutLanesByGroomer(items) {
   const order = scheduleGroomerOrder();
   const laneOf = (gid) => { const i = order.indexOf(gid); return i === -1 ? order.length : i; };
   const sorted = [...items].sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin);
-  const placed = sorted.map((it) => ({ ...it, lane: laneOf(it.booking.groomerId) }));
+  const placed = sorted.map((it) => ({ ...it }));
+  const activeIds = [...new Set(placed.map((it) => it.booking.groomerId))].sort((a, b) => laneOf(a) - laneOf(b));
+  const rank = new Map(activeIds.map((gid, i) => [gid, i]));
+  placed.forEach((it) => { it.lane = rank.get(it.booking.groomerId); });
   // Same-groomer double-bookings (rare) would otherwise fully overlap in the same lane —
   // push any later, still-overlapping duplicate one lane over instead of hiding the conflict.
   placed.forEach((it, i) => {
@@ -1361,7 +1366,7 @@ function layoutLanesByGroomer(items) {
       .filter((o) => o.lane === it.lane && o.startMin < it.endMin && o.endMin > it.startMin).length;
     it.lane += bumped;
   });
-  const laneCount = Math.max(order.length, ...placed.map((it) => it.lane + 1));
+  const laneCount = Math.max(activeIds.length, ...placed.map((it) => it.lane + 1));
   placed.forEach((it) => { it.laneCount = laneCount; });
   return placed;
 }
@@ -1379,7 +1384,8 @@ function scheduleBlockHtml(it, openMin, closeMin, color) {
   // Inset top/height by 1-2px so back-to-back bookings show a visible seam instead of blending together.
   return `<div class="schedule-block" style="top:${top + 1}px; height:${Math.max(h - 2, 20)}px; left:${left}; width:${width}; background:${color}" data-action="edit-booking" data-id="${b.id}" title="${esc(b.petName)}${b.breed ? " " + esc(b.breed) : ""} · ${timeLabel}">
     <div class="sb-time">${timeLabel}</div>
-    <strong>${esc(b.petName)}</strong>${(b.services || []).length ? `<br>${esc(b.services.join(", "))}` : ""}
+    <div class="sb-name">${esc(b.petName)}</div>
+    ${(b.services || []).length ? `<div class="sb-services">${esc(b.services.map(serviceLabel).join(", "))}</div>` : ""}
   </div>`;
 }
 
