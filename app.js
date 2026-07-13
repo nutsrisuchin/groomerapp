@@ -153,7 +153,7 @@ const GROOMER_COLORS = [
 ];
 
 /* ---------- state ---------- */
-const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], deletedBookings: [], scheduleDate: "", scheduleHiddenGroomers: [], financialMonth: "", upcomingRange: "day", bookingsOpen: { completed: false, cancelled: false, bin: false }, search: { name: "", breed: "" } };
+const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], deletedBookings: [], scheduleDate: "", scheduleHiddenGroomers: [], scheduleMiniCalOpen: false, financialMonth: "", upcomingRange: "day", bookingsOpen: { completed: false, cancelled: false, bin: false }, search: { name: "", breed: "" } };
 const getCalendarId = () => (state.settings.find((s) => s.id === "calendar") || {}).calendarId || "";
 const getCustomBreeds = () => (state.settings.find((s) => s.id === "breeds") || {}).list || [];
 
@@ -1232,13 +1232,19 @@ function viewSchedule() {
     <button class="btn sm" data-action="edit-hours">Edit hours</button>
   </div>`;
 
+  // Week/Month view has no persistent mini-calendar (it gave the grid the full page width
+  // instead — see below), so the title itself becomes a click target that pops the same
+  // mini-calendar open right under the toolbar, letting staff jump to any week/month by
+  // picking a date in it rather than only stepping one week/month at a time via the arrows.
+  const titleClickable = mode !== "day";
   const toolbar = `
   <div class="card pad gcal-toolbar">
-    <div class="row">
+    <div class="row" style="position:relative">
       <button class="btn sm" data-action="sched-today">Today</button>
       <button class="icon-btn" data-action="sched-prev" aria-label="Previous">‹</button>
       <button class="icon-btn" data-action="sched-next" aria-label="Next">›</button>
-      <div class="gcal-title">${title}</div>
+      <div class="gcal-title" ${titleClickable ? `data-action="toggle-mini-cal" style="cursor:pointer"` : ""}>${title}</div>
+      ${(titleClickable && state.scheduleMiniCalOpen) ? `<div class="mini-cal-popover">${miniCal}</div>` : ""}
     </div>
     <select id="sched-mode-select" class="sched-mode-select">
       <option value="day" ${mode === "day" ? "selected" : ""}>Day</option>
@@ -2604,7 +2610,7 @@ function bindView() {
 
   // schedule view-mode dropdown + groomer visibility toggles
   const schedMode = $("#sched-mode-select");
-  if (schedMode) schedMode.onchange = () => { state.scheduleMode = schedMode.value; render(); };
+  if (schedMode) schedMode.onchange = () => { state.scheduleMode = schedMode.value; state.scheduleMiniCalOpen = false; render(); };
   $$(".sched-groomer-toggle").forEach((cb) => cb.onchange = () => {
     const id = cb.dataset.id;
     state.scheduleHiddenGroomers = cb.checked
@@ -2794,7 +2800,8 @@ async function handleAction(action, data) {
     } break;
     case "sched-today": state.scheduleDate = todayKey(); render(); break;
     case "goto-day": state.scheduleDate = data.date; state.scheduleMode = "day"; render(); break;
-    case "sched-jump": state.scheduleDate = data.date; render(); break;
+    case "sched-jump": state.scheduleDate = data.date; state.scheduleMiniCalOpen = false; render(); break;
+    case "toggle-mini-cal": state.scheduleMiniCalOpen = !state.scheduleMiniCalOpen; render(); break;
     case "mini-cal-prev": state.scheduleDate = addMonthsKey(state.scheduleDate || todayKey(), -1); render(); break;
     case "mini-cal-next": state.scheduleDate = addMonthsKey(state.scheduleDate || todayKey(), 1); render(); break;
     case "edit-hours": hoursModal(); break;
@@ -2816,6 +2823,12 @@ document.addEventListener("click", (e) => {
   const box = document.getElementById("pet-suggest");
   const input = document.getElementById("b-pet");
   if (box && !box.hidden && e.target !== input && !box.contains(e.target)) box.hidden = true;
+});
+
+document.addEventListener("click", (e) => {
+  if (!state.scheduleMiniCalOpen) return;
+  if (e.target.closest(".mini-cal-popover") || e.target.closest('[data-action="toggle-mini-cal"]')) return;
+  state.scheduleMiniCalOpen = false; render();
 });
 
 // Mobile nav dropdown (the tab bar collapses behind a hamburger under 820px)

@@ -297,6 +297,10 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 .sched-chip input{accent-color:var(--brand)}
 @media(max-width:900px){ .gcal-layout{flex-direction:column} .gcal-sidebar{width:100%} .mini-cal{max-width:340px} }
 
+/* Week/Month view's title-click popover (Day view shows .mini-cal inline in its sidebar
+   instead — see .gcal-sidebar) — drops right below the toolbar row that positions it. */
+.mini-cal-popover{position:absolute; top:100%; left:0; z-index:10; margin-top:8px; width:260px; box-shadow:0 8px 24px rgba(0,0,0,.15); border-radius:14px}
+
 /* mini month picker */
 .mini-cal{background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:12px}
 .mini-cal-head{display:flex; align-items:center; justify-content:space-between; font-size:13px; margin-bottom:8px}
