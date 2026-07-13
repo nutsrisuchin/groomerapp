@@ -2562,7 +2562,10 @@ function bindView() {
   $$("[data-open-key]").forEach((el) => el.ontoggle = () => { state.bookingsOpen[el.dataset.openKey] = el.open; });
 
   // Click an empty spot on the Schedule grid (Day/Week) to open "New booking" prefilled with
-  // that date/time (snapped to the nearest 15 min) and groomer column, if any. Existing
+  // that date/time and groomer column, if any. Snaps to the start of whichever hour row was
+  // clicked, not a finer-grained nearest-15-min — the grid only draws hour gridlines, so
+  // snapping to anything sub-hour is invisible/unpredictable (a click anywhere in the "11:00"
+  // row could silently land on 11:15/11:30 depending on exact pixel position). Existing
   // booking blocks (data-action="edit-booking") and the "closed" overlay sit on top and
   // capture their own clicks first, so e.target !== el there — this only fires on the empty
   // background itself.
@@ -2573,7 +2576,7 @@ function bindView() {
       const openMin = toMinutes(hours.open), closeMin = toMinutes(hours.close);
       const offsetY = e.clientY - el.getBoundingClientRect().top;
       const rawMin = openMin + (offsetY / PX_PER_HOUR) * 60;
-      const snappedMin = Math.max(openMin, Math.min(closeMin, Math.round(rawMin / 15) * 15));
+      const snappedMin = Math.max(openMin, Math.min(closeMin, Math.floor(rawMin / 60) * 60));
       const start = new Date(`${el.dataset.date}T00:00:00`);
       start.setHours(Math.floor(snappedMin / 60), snappedMin % 60, 0, 0);
       bookingModal(null, null, { start, groomerId: el.dataset.groomerId || null });
