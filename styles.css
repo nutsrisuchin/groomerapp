@@ -315,9 +315,9 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 .schedule-body-row{display:flex; align-items:stretch; position:relative}
 .schedule-axis-head{width:56px; flex:none}
 .schedule-axis-body{width:56px; flex:none; position:relative}
-/* Sits flush just above its gridline (not straddling it) so the number reads as belonging to
-   the line right below it, matching how the event blocks themselves start exactly at the line. */
-.axis-mark{position:absolute; right:8px; transform:translateY(calc(-100% - 2px)); font-size:11px; color:var(--ink-faint); white-space:nowrap}
+/* Vertically centered on its gridline (top is set to the same y as the line), so the number
+   sits level with the line it labels — the same line the event blocks start from. */
+.axis-mark{position:absolute; right:8px; transform:translateY(-50%); font-size:11px; color:var(--ink-faint); white-space:nowrap}
 .schedule-col-head{flex:1; min-width:90px; display:flex; align-items:center; gap:6px; padding:0 8px 8px; font-weight:700; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; border-left:1px solid var(--line)}
 .schedule-col-head.week{flex-direction:column; gap:2px; text-align:center; justify-content:center}
 .day-name{font-size:10px; font-weight:700; color:var(--ink-faint); text-transform:uppercase; letter-spacing:.04em}
