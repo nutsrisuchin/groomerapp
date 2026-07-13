@@ -721,7 +721,7 @@ function viewHome() {
     <div class="card pad">
       <h3 class="section-title" style="margin:0 0 10px">Upcoming bookings</h3>
       ${upcoming.length
-        ? `<div class="home-bookings-list">${upcoming.map(homeBookingRow).join("")}</div>`
+        ? `<div class="home-bookings-list">${homeUpcomingList(upcoming)}</div>`
         : emptyInline("No upcoming bookings yet.")}
     </div>
 
@@ -980,21 +980,52 @@ function bookingRow(b, opts = {}) {
   </div>`;
 }
 
+// The Home page's Upcoming list, grouped by day with a Google-Calendar-style date label on
+// the left of each day's block of bookings. `bookings` arrives already sorted ascending by
+// occurrence (from upcomingBookings()), so grouping in order yields chronological day groups.
+function homeUpcomingList(bookings) {
+  const groups = [];
+  const byKey = new Map();
+  bookings.forEach((b) => {
+    const when = nextOccurrence(b) || new Date(b.start);
+    const key = dateKey(when);
+    if (!byKey.has(key)) { const g = { when, items: [] }; byKey.set(key, g); groups.push(g); }
+    byKey.get(key).items.push(b);
+  });
+  return groups.map((g) => `
+    <div class="home-day-group">
+      <div class="home-day-label">
+        <div class="hd-dow">${esc(g.when.toLocaleDateString(undefined, { weekday: "short" }))}</div>
+        <div class="hd-num">${g.when.getDate()}</div>
+        <div class="hd-mon">${esc(g.when.toLocaleDateString(undefined, { month: "short" }))}</div>
+      </div>
+      <div class="home-day-bookings">${g.items.map(homeBookingRow).join("")}</div>
+    </div>`).join("");
+}
+
 // Compact, Google-Calendar-style row used ONLY on the Home page's Upcoming list — solid
-// groomer color, ~half the height of a full bookingRow, no action buttons (bookings are
-// managed from the Bookings page). Tapping the row still opens the editor, same as tapping
-// an event block on the Schedule grid. bookingRow() above stays the full-detail version used
-// on the Bookings/Financial/Bin lists — deliberately not touched.
+// groomer color, ~half the height of a full bookingRow, optional pet thumbnail, and no
+// action buttons (bookings are managed from the Bookings page). Tapping the row still opens
+// the editor, same as tapping an event block on the Schedule grid. The date is omitted here
+// because homeUpcomingList() groups these under a shared day label. bookingRow() above stays
+// the full-detail version used on the Bookings/Financial/Bin lists — deliberately not touched.
 function homeBookingRow(b) {
   const when = nextOccurrence(b) || new Date(b.start);
   const total = bookingDurationHours(b);
   const end = total ? new Date(when.getTime() + total * 3600 * 1000) : null;
   const timeRange = end ? `${fmtTime(when)}–${fmtTime(end)}` : fmtTime(when);
+  const pet = b.petId ? state.pets.find((p) => p.id === b.petId) : null;
+  const estCost = pet ? estimateCost(pet.weight, b.services, pet.species, b.hairLength || "long", b.breed, null, pet.vip) : null;
+  const costLabel = (b.totalCost != null && b.totalCost !== "") ? `฿${Number(b.totalCost).toLocaleString()}` : (estCost ? estCost.label : null);
   const title = [b.petName, b.breed, (b.services || []).map(serviceLabel).join(", ")].filter(Boolean).join(" · ");
+  const thumb = (pet && pet.photo) ? `<img class="hb-thumb" src="${pet.photo}" alt="">` : "";
   return `
   <div class="home-booking" style="background:${groomerColor(b.groomerId)}" data-action="edit-booking" data-id="${b.id}">
-    <div class="hb-title">${esc(title)}</div>
-    <div class="hb-time">${fmtDate(when)} · ${timeRange}</div>
+    ${thumb}
+    <div class="hb-text">
+      <div class="hb-title">${esc(title)}</div>
+      <div class="hb-time">${timeRange}${costLabel ? ` · ${costLabel}` : ""}</div>
+    </div>
   </div>`;
 }
 
