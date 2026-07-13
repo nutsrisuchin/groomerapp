@@ -1017,15 +1017,16 @@ function homeBookingRow(b) {
   const pet = b.petId ? state.pets.find((p) => p.id === b.petId) : null;
   const estCost = pet ? estimateCost(pet.weight, b.services, pet.species, b.hairLength || "long", b.breed, null, pet.vip) : null;
   const costLabel = (b.totalCost != null && b.totalCost !== "") ? `฿${Number(b.totalCost).toLocaleString()}` : (estCost ? estCost.label : null);
-  const title = [b.petName, b.breed, (b.services || []).map(serviceLabel).join(", ")].filter(Boolean).join(" · ");
+  // Top row: time then pet name. Bottom row: breed · service · price.
+  const sub = [b.breed, (b.services || []).map(serviceLabel).join(", "), costLabel].filter(Boolean).join(" · ");
   const thumb = (pet && pet.photo) ? `<img class="hb-thumb" src="${pet.photo}" alt="">` : "";
   return `
   <div class="home-booking" style="background:${groomerColor(b.groomerId)}" data-action="edit-booking" data-id="${b.id}">
-    ${thumb}
     <div class="hb-text">
-      <div class="hb-title">${esc(title)}</div>
-      <div class="hb-time">${timeRange}${costLabel ? ` · ${costLabel}` : ""}</div>
+      <div class="hb-top"><span class="hb-time">${timeRange}</span><span class="hb-name">${esc(b.petName)}</span></div>
+      ${sub ? `<div class="hb-sub">${esc(sub)}</div>` : ""}
     </div>
+    ${thumb}
   </div>`;
 }
 

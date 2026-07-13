@@ -278,8 +278,10 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 .home-booking:hover{filter:brightness(1.05)}
 .hb-thumb{width:34px; height:34px; border-radius:50%; object-fit:cover; flex:none; border:2px solid rgba(255,255,255,.65)}
 .hb-text{flex:1; min-width:0}
-.hb-title{font-weight:700; font-size:13px; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
-.hb-time{font-size:12px; opacity:.92; line-height:1.3}
+.hb-top{font-size:13px; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.hb-top .hb-time{font-weight:600; opacity:.9; margin-right:6px}
+.hb-top .hb-name{font-weight:700}
+.hb-sub{font-size:12px; opacity:.92; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
 
 /* ---------- Notifications (activity feed on Home) ---------- */
 .activity-row{display:flex; gap:10px; align-items:flex-start; padding:8px 0; border-bottom:1px solid var(--line)}
