@@ -1169,7 +1169,7 @@ function viewCalendarSettings() {
 }
 
 /* ---------- SCHEDULE (Google-Calendar-style: sidebar + toolbar + views) ---------- */
-const PX_PER_HOUR = 60;
+const PX_PER_HOUR = 72; // taller blocks = more room for the pet name/services text to stay readable
 
 function sameMonth(dateStr, refDateStr) {
   const a = new Date(dateStr + "T00:00:00"), b = new Date(refDateStr + "T00:00:00");
