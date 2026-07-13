@@ -288,7 +288,14 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 .gcal-title{font-weight:700; font-size:16px; margin-left:6px}
 .sched-mode-select{width:auto; padding:8px 12px; font-weight:600}
 .upcoming-range-select{width:auto; padding:8px 12px; font-weight:600}
-@media(max-width:900px){ .gcal-layout{flex-direction:column} .gcal-sidebar{width:100%; display:flex; flex-wrap:wrap; gap:20px; align-items:flex-start} .mini-cal{flex:1; min-width:220px} .sidebar-groomers{flex:1; min-width:180px} }
+/* Groomer filter chips + Edit hours, sitting in a full-width row above the grid (moved out
+   of the old left sidebar so the grid can use the whole page width). Chips wrap on narrow
+   screens; the Edit hours button drops to the next line when they do. */
+.sched-filter-row{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:16px}
+.sched-groomer-chips{display:flex; flex-wrap:wrap; gap:8px}
+.sched-chip{display:inline-flex; align-items:center; gap:6px; padding:7px 13px; border:1px solid var(--line); border-radius:20px; background:var(--surface); font-size:13px; font-weight:600; cursor:pointer}
+.sched-chip input{accent-color:var(--brand)}
+@media(max-width:900px){ .gcal-layout{flex-direction:column} .gcal-sidebar{width:100%} .mini-cal{max-width:340px} }
 
 /* mini month picker */
 .mini-cal{background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:12px}
@@ -300,10 +307,6 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 .mini-day.outside{color:var(--ink-faint)}
 .mini-day.today{color:var(--brand); font-weight:800}
 .mini-day.selected{background:var(--brand); color:#fff; font-weight:700}
-
-/* groomer visibility toggles */
-.groomer-toggle{display:flex; align-items:center; gap:8px; padding:6px 2px; font-size:13px; font-weight:600; cursor:pointer}
-.groomer-toggle input{accent-color:var(--brand)}
 
 /* ---------- Schedule (day/week timeline) ---------- */
 /* Headers and bodies are two stacked flex rows (schedule-head-row / schedule-body-row)
@@ -329,10 +332,11 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 .schedule-block{position:absolute; border-radius:4px; padding:4px 6px; color:#fff; font-size:12px; line-height:1.35;
   overflow:hidden; cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,.2); text-shadow:0 1px 2px rgba(0,0,0,.35)}
 .schedule-block:hover{filter:brightness(1.08); z-index:2}
-/* Each line truncates on its own with an ellipsis instead of wrapping letter-by-letter when
-   a lane is narrow — much more readable than a jumbled multi-line squeeze. */
-.schedule-block .sb-time, .schedule-block .sb-name, .schedule-block .sb-services{
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+/* Time range and pet name always show in full — they wrap to another line if the lane is
+   too narrow to fit them, rather than being cut off. Only the service line truncates with an
+   ellipsis when there isn't room, since it's the least critical of the three. */
+.schedule-block .sb-services{white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.schedule-block .sb-time, .schedule-block .sb-name{overflow-wrap:break-word; word-break:break-word}
 .sb-time{font-size:11px; font-weight:700; opacity:.9}
 .sb-name{font-weight:700}
 .sb-services{opacity:.92}

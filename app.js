@@ -1194,36 +1194,43 @@ function viewSchedule() {
   const mode = state.scheduleMode, dateStr = state.scheduleDate;
   const title = mode === "day" ? fmtDateKey(dateStr) : mode === "week" ? fmtWeekRange(dateStr) : fmtMonthKey(dateStr);
 
-  const sidebar = `
-  <aside class="gcal-sidebar">
-    <div class="mini-cal">
-      <div class="mini-cal-head">
-        <strong>${fmtMonthKey(dateStr)}</strong>
-        <div class="row" style="gap:2px">
-          <button class="icon-btn" data-action="mini-cal-prev" aria-label="Previous month">‹</button>
-          <button class="icon-btn" data-action="mini-cal-next" aria-label="Next month">›</button>
-        </div>
-      </div>
-      <div class="mini-cal-grid">
-        ${DAY_NAMES_SHORT.map((d) => `<div class="mini-dow">${d[0]}</div>`).join("")}
-        ${monthGridDates(dateStr).map((d) => {
-          const inMonth = sameMonth(d, dateStr);
-          const isToday = d === todayKey();
-          const isSel = d === dateStr;
-          return `<button class="mini-day ${inMonth ? "" : "outside"} ${isToday ? "today" : ""} ${isSel ? "selected" : ""}" data-action="sched-jump" data-date="${d}">${new Date(d + "T00:00:00").getDate()}</button>`;
-        }).join("")}
+  // Mini-calendar for quick date-jumping. Only rendered in Day view (which has spare
+  // horizontal room next to its one-per-groomer columns); Week/Month give the grid the full
+  // page width instead, and reach other dates via the week/month arrows or by clicking a day
+  // in Month view (which jumps to that day). See the layout assembly at the end.
+  const miniCal = `
+  <div class="mini-cal">
+    <div class="mini-cal-head">
+      <strong>${fmtMonthKey(dateStr)}</strong>
+      <div class="row" style="gap:2px">
+        <button class="icon-btn" data-action="mini-cal-prev" aria-label="Previous month">‹</button>
+        <button class="icon-btn" data-action="mini-cal-next" aria-label="Next month">›</button>
       </div>
     </div>
-    <div class="sidebar-groomers">
-      <div class="section-title" style="margin:16px 0 8px">My groomers</div>
+    <div class="mini-cal-grid">
+      ${DAY_NAMES_SHORT.map((d) => `<div class="mini-dow">${d[0]}</div>`).join("")}
+      ${monthGridDates(dateStr).map((d) => {
+        const inMonth = sameMonth(d, dateStr);
+        const isToday = d === todayKey();
+        const isSel = d === dateStr;
+        return `<button class="mini-day ${inMonth ? "" : "outside"} ${isToday ? "today" : ""} ${isSel ? "selected" : ""}" data-action="sched-jump" data-date="${d}">${new Date(d + "T00:00:00").getDate()}</button>`;
+      }).join("")}
+    </div>
+  </div>`;
+
+  // Groomer visibility filters + Edit hours, moved out of the old left sidebar into a full-
+  // width row above the grid so the grid itself can span the whole page.
+  const filters = `
+  <div class="sched-filter-row">
+    <div class="sched-groomer-chips">
       ${state.groomers.map((g) => `
-        <label class="groomer-toggle">
+        <label class="sched-chip">
           <input type="checkbox" class="sched-groomer-toggle" data-id="${g.id}" ${state.scheduleHiddenGroomers.includes(g.id) ? "" : "checked"}>
           <span class="dot" style="background:${g.color}"></span> ${esc(g.name)}
         </label>`).join("") || emptyInline("No groomers yet.")}
     </div>
-    <button class="btn sm block" style="margin-top:14px" data-action="edit-hours">Edit hours</button>
-  </aside>`;
+    <button class="btn sm" data-action="edit-hours">Edit hours</button>
+  </div>`;
 
   const toolbar = `
   <div class="card pad gcal-toolbar">
@@ -1242,15 +1249,17 @@ function viewSchedule() {
 
   const body = mode === "day" ? scheduleBodyDay(dateStr) : mode === "week" ? scheduleBodyWeek(dateStr) : scheduleBodyMonth(dateStr);
 
+  // Day view: mini-calendar in a slim column beside the grid. Week/Month: grid gets the full
+  // page width so booking blocks stay readable.
+  const bodyArea = mode === "day"
+    ? `<div class="gcal-layout"><aside class="gcal-sidebar">${miniCal}</aside><div class="gcal-main">${body}</div></div>`
+    : body;
+
   return `
   <div class="page-head"><h1>Schedule</h1></div>
-  <div class="gcal-layout">
-    ${sidebar}
-    <div class="gcal-main">
-      ${toolbar}
-      ${body}
-    </div>
-  </div>`;
+  ${toolbar}
+  ${filters}
+  ${bodyArea}`;
 }
 
 function fmtMonthOnly(monthKey) { return new Date(monthKey + "-01T00:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }); }
