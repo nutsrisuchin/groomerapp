@@ -1419,20 +1419,29 @@ function scheduleBodyDay(dateStr) {
   const nowLine = (now.dateStr === dateStr && now.min >= openMin && now.min <= closeMin)
     ? `<div class="now-line" style="top:${((now.min - openMin) / 60) * PX_PER_HOUR}px; left:56px; right:0"><span class="now-dot"></span></div>` : "";
 
+  // Headers and bodies are two separate flex rows (not one column-head+column-body pair per
+  // groomer) specifically so the hour axis and the "now" line — which sit outside any single
+  // column — line up with the actual gridlines/blocks below the headers, not with the grid's
+  // outer top edge. Splitting them out removes the header-height mismatch that used to push
+  // axis times and the now-line above where the row lines actually are.
   const grid = `
   <div class="card pad" style="overflow-x:auto">
-    <div class="schedule-grid" style="height:${gridHeight}px">
-      <div class="schedule-axis">
-        ${hourMarks.map((m) => `<div class="axis-mark" style="top:${((m - openMin) / 60) * PX_PER_HOUR}px">${fmtMinutes(m)}</div>`).join("")}
+    <div class="schedule-grid">
+      <div class="schedule-head-row">
+        <div class="schedule-axis-head"></div>
+        ${gridColumns.map((col) => `
+          <div class="schedule-col-head"><span class="dot" style="background:${col.groomer.color}"></span>${esc(col.groomer.name)}</div>`).join("")}
       </div>
-      ${gridColumns.map((col) => `
-        <div class="schedule-col">
-          <div class="schedule-col-head"><span class="dot" style="background:${col.groomer.color}"></span>${esc(col.groomer.name)}</div>
-          <div class="schedule-col-body" data-date="${dateStr}" data-groomer-id="${col.groomer.id || ""}" style="height:${gridHeight}px">
+      <div class="schedule-body-row" style="height:${gridHeight}px">
+        <div class="schedule-axis-body">
+          ${hourMarks.map((m) => `<div class="axis-mark" style="top:${((m - openMin) / 60) * PX_PER_HOUR}px">${fmtMinutes(m)}</div>`).join("")}
+        </div>
+        ${gridColumns.map((col) => `
+          <div class="schedule-col-body" data-date="${dateStr}" data-groomer-id="${col.groomer.id || ""}">
             ${col.items.map((it) => scheduleBlockHtml(it, openMin, closeMin, col.groomer.color)).join("")}
-          </div>
-        </div>`).join("")}
-      ${nowLine}
+          </div>`).join("")}
+        ${nowLine}
+      </div>
     </div>
   </div>`;
 
@@ -1473,23 +1482,27 @@ function scheduleBodyWeek(dateStr) {
 
   return `
   <div class="card pad" style="overflow-x:auto">
-    <div class="schedule-grid" style="height:${gridHeight}px">
-      <div class="schedule-axis">
-        ${hourMarks.map((m) => `<div class="axis-mark" style="top:${((m - openMin) / 60) * PX_PER_HOUR}px">${fmtMinutes(m)}</div>`).join("")}
-      </div>
-      ${cols.map((col) => `
-        <div class="schedule-col">
+    <div class="schedule-grid">
+      <div class="schedule-head-row">
+        <div class="schedule-axis-head"></div>
+        ${cols.map((col) => `
           <div class="schedule-col-head week" data-action="goto-day" data-date="${col.dateStr}" style="cursor:pointer">
             <div class="day-name">${DAY_NAMES_SHORT[col.dow]}</div>
             <span class="day-num ${col.dateStr === today ? "today" : ""}">${new Date(col.dateStr + "T00:00:00").getDate()}</span>
-          </div>
-          <div class="schedule-col-body" data-date="${col.dateStr}" style="height:${gridHeight}px">
+          </div>`).join("")}
+      </div>
+      <div class="schedule-body-row" style="height:${gridHeight}px">
+        <div class="schedule-axis-body">
+          ${hourMarks.map((m) => `<div class="axis-mark" style="top:${((m - openMin) / 60) * PX_PER_HOUR}px">${fmtMinutes(m)}</div>`).join("")}
+        </div>
+        ${cols.map((col) => `
+          <div class="schedule-col-body" data-date="${col.dateStr}">
             ${col.closed ? `<div class="closed-overlay">Closed</div>`
               : col.items.map((it) => scheduleBlockHtml(it, openMin, closeMin, groomerColor(it.booking.groomerId))).join("")}
             ${(col.dateStr === now.dateStr && now.min >= openMin && now.min <= closeMin)
               ? `<div class="now-line" style="top:${((now.min - openMin) / 60) * PX_PER_HOUR}px; left:0; right:0"><span class="now-dot"></span></div>` : ""}
-          </div>
-        </div>`).join("")}
+          </div>`).join("")}
+      </div>
     </div>
   </div>`;
 }
