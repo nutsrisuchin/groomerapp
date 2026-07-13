@@ -694,7 +694,7 @@ function go(view, petId = null) {
 function viewHome() {
   const results = filteredPets();
   const searching = state.search.name || state.search.breed;
-  const upcoming = upcomingBookings(6);
+  const upcoming = upcomingBookings(); // no limit — Home now lists every upcoming booking, compactly
   const recent = [...state.activity].sort((a, b) => b.at - a.at).slice(0, 8);
 
   return `
@@ -719,11 +719,10 @@ function viewHome() {
 
   <div class="grid home">
     <div class="card pad">
-      <div class="spread" style="margin-bottom:6px">
-        <h3 class="section-title" style="margin:0">Upcoming bookings</h3>
-        <button class="link" data-nav="bookings">View all</button>
-      </div>
-      ${upcoming.length ? upcoming.map(bookingRow).join("") : emptyInline("No upcoming bookings yet.")}
+      <h3 class="section-title" style="margin:0 0 10px">Upcoming bookings</h3>
+      ${upcoming.length
+        ? `<div class="home-bookings-list">${upcoming.map(homeBookingRow).join("")}</div>`
+        : emptyInline("No upcoming bookings yet.")}
     </div>
 
     <div class="stack" style="gap:16px">
@@ -978,6 +977,24 @@ function bookingRow(b, opts = {}) {
         ${canDelete() ? `<button class="icon-btn" data-action="del-booking" data-id="${b.id}" title="Delete">🗑</button>` : ""}
       `}
     </div>
+  </div>`;
+}
+
+// Compact, Google-Calendar-style row used ONLY on the Home page's Upcoming list — solid
+// groomer color, ~half the height of a full bookingRow, no action buttons (bookings are
+// managed from the Bookings page). Tapping the row still opens the editor, same as tapping
+// an event block on the Schedule grid. bookingRow() above stays the full-detail version used
+// on the Bookings/Financial/Bin lists — deliberately not touched.
+function homeBookingRow(b) {
+  const when = nextOccurrence(b) || new Date(b.start);
+  const total = bookingDurationHours(b);
+  const end = total ? new Date(when.getTime() + total * 3600 * 1000) : null;
+  const timeRange = end ? `${fmtTime(when)}–${fmtTime(end)}` : fmtTime(when);
+  const title = [b.petName, b.breed, (b.services || []).map(serviceLabel).join(", ")].filter(Boolean).join(" · ");
+  return `
+  <div class="home-booking" style="background:${groomerColor(b.groomerId)}" data-action="edit-booking" data-id="${b.id}">
+    <div class="hb-title">${esc(title)}</div>
+    <div class="hb-time">${fmtDate(when)} · ${timeRange}</div>
   </div>`;
 }
 
