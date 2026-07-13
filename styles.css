@@ -281,25 +281,20 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 .fin-groomer-row strong{width:90px; flex:none; text-align:right}
 
 /* ---------- Schedule: Google-Calendar-style layout ---------- */
-.gcal-layout{display:flex; gap:20px; align-items:flex-start}
-.gcal-sidebar{width:232px; flex:none}
-.gcal-main{flex:1; min-width:0}
 .gcal-toolbar{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:16px}
 .gcal-title{font-weight:700; font-size:16px; margin-left:6px}
 .sched-mode-select{width:auto; padding:8px 12px; font-weight:600}
 .upcoming-range-select{width:auto; padding:8px 12px; font-weight:600}
-/* Groomer filter chips + Edit hours, sitting in a full-width row above the grid (moved out
-   of the old left sidebar so the grid can use the whole page width). Chips wrap on narrow
+/* Groomer filter chips + Edit hours, sitting in a full-width row above the grid so the grid
+   itself can use the whole page width in every mode (Day/Week/Month). Chips wrap on narrow
    screens; the Edit hours button drops to the next line when they do. */
 .sched-filter-row{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:16px}
 .sched-groomer-chips{display:flex; flex-wrap:wrap; gap:8px}
 .sched-chip{display:inline-flex; align-items:center; gap:6px; padding:7px 13px; border:1px solid var(--line); border-radius:20px; background:var(--surface); font-size:13px; font-weight:600; cursor:pointer}
 .sched-chip input{accent-color:var(--brand)}
-@media(max-width:900px){ .gcal-layout{flex-direction:column} .gcal-sidebar{width:100%} .mini-cal{max-width:340px} }
-
-/* Week/Month view's title-click popover (Day view shows .mini-cal inline in its sidebar
-   instead — see .gcal-sidebar) — drops right below the toolbar row that positions it. */
+/* Every mode's title-click popover — drops right below the toolbar row that positions it. */
 .mini-cal-popover{position:absolute; top:100%; left:0; z-index:10; margin-top:8px; width:260px; box-shadow:0 8px 24px rgba(0,0,0,.15); border-radius:14px}
+@media(max-width:900px){ .mini-cal{max-width:340px} }
 
 /* mini month picker */
 .mini-cal{background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:12px}

@@ -1190,7 +1190,7 @@ function nowMinutesToday() { const n = new Date(); return { dateStr: dateKey(n),
 
 function viewSchedule() {
   if (!state.scheduleDate) state.scheduleDate = todayKey();
-  if (!state.scheduleMode) state.scheduleMode = "day";
+  if (!state.scheduleMode) state.scheduleMode = "week";
   const mode = state.scheduleMode, dateStr = state.scheduleDate;
   const title = mode === "day" ? fmtDateKey(dateStr) : mode === "week" ? fmtWeekRange(dateStr) : fmtMonthKey(dateStr);
 
@@ -1232,19 +1232,18 @@ function viewSchedule() {
     <button class="btn sm" data-action="edit-hours">Edit hours</button>
   </div>`;
 
-  // Week/Month view has no persistent mini-calendar (it gave the grid the full page width
-  // instead — see below), so the title itself becomes a click target that pops the same
-  // mini-calendar open right under the toolbar, letting staff jump to any week/month by
-  // picking a date in it rather than only stepping one week/month at a time via the arrows.
-  const titleClickable = mode !== "day";
+  // No mode has a persistent mini-calendar anymore — every view gets the grid's full page
+  // width, and the title itself is a click target that pops the same mini-calendar open
+  // right under the toolbar, letting staff jump to any day/week/month by picking a date in
+  // it rather than only stepping one at a time via the arrows.
   const toolbar = `
   <div class="card pad gcal-toolbar">
     <div class="row" style="position:relative">
       <button class="btn sm" data-action="sched-today">Today</button>
       <button class="icon-btn" data-action="sched-prev" aria-label="Previous">‹</button>
       <button class="icon-btn" data-action="sched-next" aria-label="Next">›</button>
-      <div class="gcal-title" ${titleClickable ? `data-action="toggle-mini-cal" style="cursor:pointer"` : ""}>${title}</div>
-      ${(titleClickable && state.scheduleMiniCalOpen) ? `<div class="mini-cal-popover">${miniCal}</div>` : ""}
+      <div class="gcal-title" data-action="toggle-mini-cal" style="cursor:pointer">${title}</div>
+      ${state.scheduleMiniCalOpen ? `<div class="mini-cal-popover">${miniCal}</div>` : ""}
     </div>
     <select id="sched-mode-select" class="sched-mode-select">
       <option value="day" ${mode === "day" ? "selected" : ""}>Day</option>
@@ -1255,17 +1254,11 @@ function viewSchedule() {
 
   const body = mode === "day" ? scheduleBodyDay(dateStr) : mode === "week" ? scheduleBodyWeek(dateStr) : scheduleBodyMonth(dateStr);
 
-  // Day view: mini-calendar in a slim column beside the grid. Week/Month: grid gets the full
-  // page width so booking blocks stay readable.
-  const bodyArea = mode === "day"
-    ? `<div class="gcal-layout"><aside class="gcal-sidebar">${miniCal}</aside><div class="gcal-main">${body}</div></div>`
-    : body;
-
   return `
   <div class="page-head"><h1>Schedule</h1></div>
   ${toolbar}
   ${filters}
-  ${bodyArea}`;
+  ${body}`;
 }
 
 function fmtMonthOnly(monthKey) { return new Date(monthKey + "-01T00:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }); }
