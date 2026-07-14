@@ -153,7 +153,7 @@ const GROOMER_COLORS = [
 ];
 
 /* ---------- state ---------- */
-const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], deletedBookings: [], scheduleDate: "", scheduleHiddenGroomers: [], scheduleMiniCalOpen: false, financialStart: "", financialEnd: "", financialCalMonth: "", financialCalOpen: false, upcomingRange: "day", bookingsOpen: { completed: false, cancelled: false, bin: false }, search: { name: "", breed: "" } };
+const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], deletedBookings: [], scheduleDate: "", scheduleHiddenGroomers: [], scheduleMiniCalOpen: false, financialStart: "", financialEnd: "", financialCalMonth: "", financialCalOpen: false, upcomingRange: "day", bookingsOpen: { completed: false, cancelled: false, bin: false }, search: { name: "", breed: "" }, petsQuery: "" };
 const getCalendarId = () => (state.settings.find((s) => s.id === "calendar") || {}).calendarId || "";
 const getCustomBreeds = () => (state.settings.find((s) => s.id === "breeds") || {}).list || [];
 
@@ -754,14 +754,25 @@ function viewHome() {
 
 /* ---------- PETS LIST ---------- */
 function viewPets() {
-  const pets = [...state.pets].sort((a, b) => a.name.localeCompare(b.name));
+  const q = (state.petsQuery || "").trim().toLowerCase();
+  const pets = [...state.pets]
+    .filter((p) => !q || (p.name || "").toLowerCase().includes(q) || (p.breed || "").toLowerCase().includes(q))
+    .sort((a, b) => a.name.localeCompare(b.name));
   return `
   <div class="page-head">
-    <h1>Pets <span class="faint" style="font-weight:600">(${pets.length})</span></h1>
+    <h1>Pets <span class="faint" style="font-weight:600">(${state.pets.length})</span></h1>
     <button class="btn primary" data-action="new-pet">＋ Add pet</button>
   </div>
+  <div class="card pad" style="margin-bottom:16px">
+    <div class="row">
+      <input id="pets-q" class="grow" placeholder="Search by name or breed…" value="${esc(state.petsQuery || "")}">
+      ${q ? `<button class="btn" data-action="clear-pets-search">Clear</button>` : ""}
+    </div>
+    ${q ? `<div class="muted" style="margin-top:8px">${pets.length} match${pets.length === 1 ? "" : "es"}</div>` : ""}
+  </div>
   ${pets.length ? `<div class="grid pets">${pets.map(petCard).join("")}</div>`
-    : emptyBlock("🐾", "No pet profiles yet", "Add your first furry client to get started.", "new-pet", "Add a pet")}`;
+    : (q ? emptyInline("No pets match your search.")
+         : emptyBlock("🐾", "No pet profiles yet", "Add your first furry client to get started.", "new-pet", "Add a pet"))}`;
 }
 
 function petCard(p) {
@@ -800,6 +811,13 @@ function viewPetDetail() {
       cost: b.totalCost, fromBooking: true,
     }));
   const history = [...manualHistory, ...bookingHistory].sort((a, b) => new Date(b.date) - new Date(a.date));
+  // This pet's own upcoming (pending, not-yet-past) bookings, soonest first.
+  const petUpcoming = state.bookings
+    .filter((b) => b.petId === p.id && (!b.status || b.status === "pending"))
+    .map((b) => ({ b, when: nextOccurrence(b) }))
+    .filter((x) => x.when && x.when >= startOfToday())
+    .sort((a, b) => a.when - b.when)
+    .map((x) => x.b);
   const photo = p.photo ? `style="background-image:url('${p.photo}')"` : "";
   const priceTier = tierForWeight(p.weight, p.species);
 
@@ -833,6 +851,16 @@ function viewPetDetail() {
             <span class="time-pill">💈 Full Groom · ${fmtPriceRange(priceTier.fullGroom)}</span>
           </div>` : ""}
       </div>
+    </div>
+  </div>
+
+  <div class="card pad" style="margin-top:16px">
+    <div class="spread"><h3 class="section-title" style="margin:0">Upcoming bookings (${petUpcoming.length})</h3>
+      <button class="btn sm primary" data-action="book-pet" data-id="${p.id}">＋ Book</button></div>
+    <div style="margin-top:10px">
+      ${petUpcoming.length
+        ? `<div class="home-bookings-list">${homeUpcomingList(petUpcoming, p.id)}</div>`
+        : emptyInline("No upcoming bookings.")}
     </div>
   </div>
 
@@ -980,10 +1008,11 @@ function bookingRow(b, opts = {}) {
   </div>`;
 }
 
-// The Home page's Upcoming list, grouped by day with a Google-Calendar-style date label on
-// the left of each day's block of bookings. `bookings` arrives already sorted ascending by
-// occurrence (from upcomingBookings()), so grouping in order yields chronological day groups.
-function homeUpcomingList(bookings) {
+// The Upcoming list (Home, and reused on the pet-detail page), grouped by day with a Google-
+// Calendar-style date label on the left of each day's block of bookings. `bookings` arrives
+// already sorted ascending by occurrence, so grouping in order yields chronological day groups.
+// `petId` (pet-detail only) makes "click a day to add a booking" pre-fill that pet.
+function homeUpcomingList(bookings, petId) {
   const groups = [];
   const byKey = new Map();
   bookings.forEach((b) => {
@@ -995,7 +1024,7 @@ function homeUpcomingList(bookings) {
   // data-date drives "click empty space in this day's row to add a booking on that day" —
   // wired in bindView(), which ignores clicks that land on a booking block (those edit).
   return groups.map((g) => `
-    <div class="home-day-group" data-date="${dateKey(g.when)}" title="Click to add a booking on this day">
+    <div class="home-day-group" data-date="${dateKey(g.when)}" ${petId ? `data-pet-id="${petId}"` : ""} title="Click to add a booking on this day">
       <div class="home-day-label">
         <div class="hd-dow">${esc(g.when.toLocaleDateString(undefined, { weekday: "short" }))}</div>
         <div class="hd-num">${g.when.getDate()}</div>
@@ -2705,8 +2734,11 @@ function bindView() {
 
   // live search on home
   const qn = $("#q-name"), qb = $("#q-breed");
-  if (qn) qn.oninput = () => { state.search.name = qn.value; renderHomeResults(); };
-  if (qb) qb.oninput = () => { state.search.breed = qb.value; renderHomeResults(); };
+  if (qn) qn.oninput = () => { state.search.name = qn.value; renderKeepingFocus(); };
+  if (qb) qb.oninput = () => { state.search.breed = qb.value; renderKeepingFocus(); };
+  // live search on the Pets page
+  const petsQ = $("#pets-q");
+  if (petsQ) petsQ.oninput = () => { state.petsQuery = petsQ.value; renderKeepingFocus(); };
 
   // Completed/Cancelled/Bin collapsibles on Bookings — remember open/closed across re-renders
   // (completing/editing/cancelling a booking re-renders the whole page, which would otherwise
@@ -2743,7 +2775,8 @@ function bindView() {
       const min = firstFreeMinuteOnDay(el.dataset.date);
       const start = new Date(`${el.dataset.date}T00:00:00`);
       start.setHours(Math.floor(min / 60), min % 60, 0, 0);
-      bookingModal(null, null, { start });
+      const prefillPet = el.dataset.petId ? state.pets.find((p) => p.id === el.dataset.petId) : null;
+      bookingModal(null, prefillPet, { start });
     };
   });
 
@@ -2767,9 +2800,9 @@ function bindView() {
   });
 }
 
-// Re-render only home so the search inputs keep focus/caret
-function renderHomeResults() {
-  if (state.view !== "home") return;
+// Re-render while keeping the focused text input focused with its caret intact — used by the
+// live pet searches (Home and Pets) so typing a query doesn't blur the field every keystroke.
+function renderKeepingFocus() {
   const focused = document.activeElement && document.activeElement.id;
   const selStart = focused ? document.activeElement.selectionStart : null;
   render();
@@ -2973,6 +3006,7 @@ async function handleAction(action, data) {
     } break;
     case "set-upcoming-range": state.upcomingRange = data.value; render(); break;
     case "clear-search": state.search = { name: "", breed: "" }; render(); break;
+    case "clear-pets-search": state.petsQuery = ""; render(); break;
     case "go-pets": go("pets"); break;
   }
 }

@@ -116,6 +116,9 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 .grid{display:grid; gap:16px}
 .grid.home{grid-template-columns:1.3fr 1fr}
 .grid.pets{grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}
+/* Phones: force a 2-up grid (the 230px auto-fill min would otherwise collapse to 1 column
+   on a narrow screen, wasting the width). */
+@media(max-width:600px){ .grid.pets{grid-template-columns:repeat(2,1fr); gap:12px} }
 @media(max-width:820px){
   .grid.home{grid-template-columns:1fr}
   .nav-toggle{display:flex}
