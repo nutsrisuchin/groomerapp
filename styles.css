@@ -74,6 +74,12 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
   background:rgba(255,255,255,.82); backdrop-filter:blur(10px);
   border-bottom:1px solid var(--line);
 }
+/* On a short viewport (phone in landscape) the sticky bar eats a big chunk of the limited
+   height, so let it scroll away with the page instead of pinning to the top. Tall enough
+   viewports (portrait phones, tablets, desktop) keep it sticky. */
+@media (orientation: landscape) and (max-height: 500px){
+  .topbar{position:static}
+}
 .gcal-banner{
   display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
   padding:10px 24px; background:#fff8e1; border-bottom:1px solid #f5d97a; font-size:13px; font-weight:600; color:#7a5b00;
@@ -266,12 +272,16 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
    Roughly half the height of a full .booking row and with no action buttons, so the whole list
    fits on one phone screen. Only used on Home; the Bookings page keeps full .booking rows. */
 .home-bookings-list{display:flex; flex-direction:column}
-.home-day-group{display:flex; gap:12px; align-items:flex-start; padding:10px 0; border-top:1px solid var(--line)}
+/* The whole day row is clickable to add a booking on that day (blocks handle their own edit
+   click) — the date label doubles as the affordance, showing a "＋" that firms up on hover. */
+.home-day-group{display:flex; gap:12px; align-items:flex-start; padding:10px 0; border-top:1px solid var(--line); cursor:pointer}
 .home-day-group:first-child{border-top:0; padding-top:0}
 .home-day-label{width:42px; flex:none; text-align:center; padding-top:3px}
 .hd-dow{font-size:10px; font-weight:700; color:var(--ink-faint); text-transform:uppercase; letter-spacing:.04em}
 .hd-num{font-size:22px; font-weight:800; line-height:1.05}
 .hd-mon{font-size:10px; font-weight:600; color:var(--ink-faint)}
+.hd-add{font-size:14px; font-weight:700; color:var(--ink-faint); opacity:.45; margin-top:2px; line-height:1}
+.home-day-group:hover .hd-add{opacity:1; color:var(--brand)}
 .home-day-bookings{flex:1; min-width:0; display:flex; flex-direction:column; gap:6px}
 .home-booking{display:flex; align-items:center; gap:9px; border-radius:8px; padding:7px 11px; color:#fff; cursor:pointer;
   text-shadow:0 1px 2px rgba(0,0,0,.35); box-shadow:0 1px 2px rgba(0,0,0,.12)}

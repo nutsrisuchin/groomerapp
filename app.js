@@ -992,15 +992,27 @@ function homeUpcomingList(bookings) {
     if (!byKey.has(key)) { const g = { when, items: [] }; byKey.set(key, g); groups.push(g); }
     byKey.get(key).items.push(b);
   });
+  // data-date drives "click empty space in this day's row to add a booking on that day" —
+  // wired in bindView(), which ignores clicks that land on a booking block (those edit).
   return groups.map((g) => `
-    <div class="home-day-group">
+    <div class="home-day-group" data-date="${dateKey(g.when)}" title="Click to add a booking on this day">
       <div class="home-day-label">
         <div class="hd-dow">${esc(g.when.toLocaleDateString(undefined, { weekday: "short" }))}</div>
         <div class="hd-num">${g.when.getDate()}</div>
         <div class="hd-mon">${esc(g.when.toLocaleDateString(undefined, { month: "short" }))}</div>
+        <div class="hd-add">＋</div>
       </div>
       <div class="home-day-bookings">${g.items.map(homeBookingRow).join("")}</div>
     </div>`).join("");
+}
+// First time in the shop's business hours on `dateStr` with no booking at all — a reasonable
+// "next open slot" suggestion when adding a booking for that day from Home. Falls back to
+// opening time if the day is empty (or somehow fully packed).
+function firstFreeMinuteOnDay(dateStr) {
+  const hours = getBusinessHours();
+  const openMin = toMinutes(hours.open), closeMin = toMinutes(hours.close);
+  const free = freeSlots(bookingsOnDate(dateStr), openMin, closeMin);
+  return free.length ? free[0].startMin : openMin;
 }
 
 // Compact, Google-Calendar-style row used ONLY on the Home page's Upcoming list — solid
@@ -2698,6 +2710,18 @@ function bindView() {
       const start = new Date(`${el.dataset.date}T00:00:00`);
       start.setHours(Math.floor(snappedMin / 60), snappedMin % 60, 0, 0);
       bookingModal(null, null, { start, groomerId: el.dataset.groomerId || null });
+    };
+  });
+
+  // Home upcoming list: click empty space in a day's row to add a booking on that day, with
+  // the first free time of the day pre-suggested. Clicks on a booking block edit it instead.
+  $$(".home-day-group").forEach((el) => {
+    el.onclick = (e) => {
+      if (e.target.closest(".home-booking") || !el.dataset.date) return;
+      const min = firstFreeMinuteOnDay(el.dataset.date);
+      const start = new Date(`${el.dataset.date}T00:00:00`);
+      start.setHours(Math.floor(min / 60), min % 60, 0, 0);
+      bookingModal(null, null, { start });
     };
   });
 
