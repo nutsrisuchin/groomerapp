@@ -421,6 +421,11 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 .modal-x{position:absolute; top:14px; right:14px; border:0; background:var(--surface-2); width:32px; height:32px; border-radius:9px; color:var(--ink-soft)}
 .modal-x:hover{background:var(--line)}
 .modal h2{margin:0 0 4px; font-size:20px}
+/* The confirmation message shown after a new booking is saved. user-select:all so one tap
+   selects the whole thing for manual copy on devices where the Copy button's clipboard call
+   is blocked. font-size:16px keeps iOS Safari from zooming if it's long enough to scroll. */
+.confirm-msg-box{background:var(--surface-2); border:1px solid var(--line); border-radius:12px;
+  padding:12px 14px; font-size:16px; line-height:1.45; word-break:break-word; user-select:all; -webkit-user-select:all}
 
 /* ---------- Toast ---------- */
 .toast{position:fixed; bottom:max(24px, env(safe-area-inset-bottom)); left:50%; transform:translateX(-50%);

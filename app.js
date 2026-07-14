@@ -1050,6 +1050,25 @@ function bookingConfirmMessage(b) {
   return ["confirmed", `N'${b.petName}`, b.breed, services, `${fmtDate(when)} ${fmtTime(when)}`].filter(Boolean).join(" ");
 }
 
+// Shown right after a NEW booking is saved: surfaces the customer confirmation message so
+// staff can copy it there and then. Manual-select fallback (user-select:all on the box) in
+// case navigator.clipboard is blocked. "Ok" closes via the global data-close-modal handler.
+function confirmCopyModal(b) {
+  const msg = bookingConfirmMessage(b);
+  openModal(`
+    <h2>Booking created ✓</h2>
+    <div class="muted" style="margin-bottom:12px">Send this confirmation to the customer:</div>
+    <div class="confirm-msg-box">${esc(msg)}</div>
+    <div class="row" style="justify-content:flex-end; gap:8px; margin-top:16px">
+      <button class="btn" id="confirm-copy-btn">📋 Copy</button>
+      <button class="btn primary" data-close-modal>Ok</button>
+    </div>`);
+  $("#confirm-copy-btn").onclick = async () => {
+    try { await navigator.clipboard.writeText(msg); toast("Copied — ready to paste to the customer"); }
+    catch (err) { toast("Couldn't copy automatically — tap and hold the message to copy it."); }
+  };
+}
+
 // Confirming "Complete" also doubles as the last chance to fix the price — one modal
 // instead of editing the booking separately and then confirming, since in practice the
 // final price is often only known once the service is actually done. Pre-filled with
@@ -2236,11 +2255,14 @@ function bookingModal(booking, prefillPet, slotPrefill) {
     };
     await DB.put("bookings", rec);
     upsertLocal("bookings", rec);
-    closeModal(); toast(booking ? "Booking updated" : "Booking created"); render();
+    render();
     reconcileCalendar();
     rememberBreed(rec.breed);
     logActivity("booking", booking ? "updated" : "created",
       `${rec.petName}${rec.breed ? ` (${rec.breed})` : ""} with ${groomerName(rec.groomerId)} — ${fmtDate(rec.start)} ${fmtTime(rec.start)}`);
+    // New booking → swap the form for a copy-the-confirmation popup; editing just closes.
+    if (booking) { closeModal(); toast("Booking updated"); }
+    else { toast("Booking created"); confirmCopyModal(rec); }
   };
 }
 
