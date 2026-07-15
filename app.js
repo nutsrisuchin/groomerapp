@@ -859,7 +859,7 @@ function viewPetDetail() {
       <button class="btn sm primary" data-action="book-pet" data-id="${p.id}">＋ Book</button></div>
     <div style="margin-top:10px">
       ${petUpcoming.length
-        ? `<div class="home-bookings-list">${homeUpcomingList(petUpcoming, p.id)}</div>`
+        ? `<div class="home-bookings-list">${homeUpcomingList(petUpcoming, p.id, { hidePrice: true })}</div>`
         : emptyInline("No upcoming bookings.")}
     </div>
   </div>
@@ -1011,8 +1011,9 @@ function bookingRow(b, opts = {}) {
 // The Upcoming list (Home, and reused on the pet-detail page), grouped by day with a Google-
 // Calendar-style date label on the left of each day's block of bookings. `bookings` arrives
 // already sorted ascending by occurrence, so grouping in order yields chronological day groups.
-// `petId` (pet-detail only) makes "click a day to add a booking" pre-fill that pet.
-function homeUpcomingList(bookings, petId) {
+// `petId` (pet-detail only) makes "click a day to add a booking" pre-fill that pet. `opts` is
+// forwarded to each row (e.g. { hidePrice: true } on the pet page).
+function homeUpcomingList(bookings, petId, opts = {}) {
   const groups = [];
   const byKey = new Map();
   bookings.forEach((b) => {
@@ -1031,7 +1032,7 @@ function homeUpcomingList(bookings, petId) {
         <div class="hd-mon">${esc(g.when.toLocaleDateString(undefined, { month: "short" }))}</div>
         <div class="hd-add">＋</div>
       </div>
-      <div class="home-day-bookings">${g.items.map(homeBookingRow).join("")}</div>
+      <div class="home-day-bookings">${g.items.map((b) => homeBookingRow(b, opts)).join("")}</div>
     </div>`).join("");
 }
 // First time in the shop's business hours on `dateStr` with no booking at all — a reasonable
@@ -1044,21 +1045,26 @@ function firstFreeMinuteOnDay(dateStr) {
   return free.length ? free[0].startMin : openMin;
 }
 
-// Compact, Google-Calendar-style row used ONLY on the Home page's Upcoming list — solid
-// groomer color, ~half the height of a full bookingRow, optional pet thumbnail, and no
-// action buttons (bookings are managed from the Bookings page). Tapping the row still opens
+// Compact, Google-Calendar-style row used on the Home page's Upcoming list (and the pet-detail
+// page's). Solid groomer color, ~half the height of a full bookingRow, optional pet thumbnail,
+// no action buttons (bookings are managed from the Bookings page). Tapping the row still opens
 // the editor, same as tapping an event block on the Schedule grid. The date is omitted here
-// because homeUpcomingList() groups these under a shared day label. bookingRow() above stays
-// the full-detail version used on the Bookings/Financial/Bin lists — deliberately not touched.
-function homeBookingRow(b) {
+// because homeUpcomingList() groups these under a shared day label. opts.hidePrice drops the
+// price from the row — used on the pet page, which staff screenshot to send to customers who
+// shouldn't see the preliminary estimate. bookingRow() above stays the full-detail version
+// used on the Bookings/Financial/Bin lists — deliberately not touched.
+function homeBookingRow(b, opts = {}) {
   const when = nextOccurrence(b) || new Date(b.start);
   const total = bookingDurationHours(b);
   const end = total ? new Date(when.getTime() + total * 3600 * 1000) : null;
   const timeRange = end ? `${fmtTime(when)}–${fmtTime(end)}` : fmtTime(when);
   const pet = b.petId ? state.pets.find((p) => p.id === b.petId) : null;
-  const estCost = pet ? estimateCost(pet.weight, b.services, pet.species, b.hairLength || "long", b.breed, null, pet.vip) : null;
-  const costLabel = (b.totalCost != null && b.totalCost !== "") ? `฿${Number(b.totalCost).toLocaleString()}` : (estCost ? estCost.label : null);
-  // Top row: time then pet name. Bottom row: breed · service · price.
+  let costLabel = null;
+  if (!opts.hidePrice) {
+    const estCost = pet ? estimateCost(pet.weight, b.services, pet.species, b.hairLength || "long", b.breed, null, pet.vip) : null;
+    costLabel = (b.totalCost != null && b.totalCost !== "") ? `฿${Number(b.totalCost).toLocaleString()}` : (estCost ? estCost.label : null);
+  }
+  // Top row: time then pet name. Bottom row: breed · service · price (price omitted if hidden).
   const sub = [b.breed, (b.services || []).map(serviceLabel).join(", "), costLabel].filter(Boolean).join(" · ");
   const thumb = (pet && pet.photo) ? `<img class="hb-thumb" src="${pet.photo}" alt="">` : "";
   return `
