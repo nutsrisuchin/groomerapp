@@ -236,7 +236,10 @@ Chrome DevTools' device emulation caught the same rendering bug.
 
 Firestore collections: `pets`, `groomers`, `bookings`, `admins`, `settings`, `activity`,
 `calendarTombstones`, `deletedBookings` (the Bin — soft-deleted bookings, same doc id as the
-original, restorable via the Bookings page's "🗑 Bin" section; Owner/Admin only).
+original, restorable via the Bookings page's "🗑 Bin" section; Owner/Admin only), `leaves`
+(groomer on-leave records: `groomerId`, `from`/`to` inclusive day keys, `note`; entered via the
+"🌴 Groomer on leave" button in the New Booking modal, shown on the Schedule via
+`groomerLeaveOnDate()` — display-only, doesn't hard-block booking that groomer).
 
 - **`bookings`**: `petId` (optional — a booking can reference a free-text `petName`/`breed`
   without a real pet record), `groomerId` (`null` = "No preference", rendered as its own

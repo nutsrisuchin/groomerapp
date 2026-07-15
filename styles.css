@@ -363,6 +363,15 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 .schedule-col-head .day-num.today{background:var(--brand); color:#fff; width:26px; height:26px; border-radius:50%; font-weight:800}
 .schedule-col-body{flex:1; min-width:90px; position:relative; cursor:pointer; border-left:1px solid var(--line); background-image:repeating-linear-gradient(to bottom, var(--line) 0, var(--line) 1px, transparent 1px, transparent 72px)}
 .schedule-col-body:hover{background-color:rgba(124,92,255,.05)}
+/* A groomer on leave that day: faint diagonal stripes behind the column so it reads as
+   unavailable, without hiding any booking blocks drawn on top. */
+.schedule-col-body.on-leave{background-image:repeating-linear-gradient(to bottom, var(--line) 0, var(--line) 1px, transparent 1px, transparent 72px), repeating-linear-gradient(-45deg, rgba(31,36,48,.05) 0 8px, transparent 8px 16px)}
+/* "On leave" markers: black chip in the Day header, small chip under the Week day number. */
+.leave-badge{font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; padding:2px 7px; border-radius:6px; background:var(--ink); color:#fff; white-space:nowrap}
+.leave-chip{font-size:10px; font-weight:700; padding:2px 6px; border-radius:6px; background:var(--ink); color:#fff; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:3px}
+/* The "Groomer on leave" button in the New Booking header — black with white text. */
+.leave-btn{background:var(--ink); color:#fff; border-color:var(--ink)}
+.leave-btn:hover{background:#000}
 .schedule-block{position:absolute; border-radius:4px; padding:4px 6px; color:#fff; font-size:12px; line-height:1.35;
   overflow:hidden; cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,.2); text-shadow:0 1px 2px rgba(0,0,0,.35)}
 .schedule-block:hover{filter:brightness(1.08); z-index:2}

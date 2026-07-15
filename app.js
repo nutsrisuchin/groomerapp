@@ -153,7 +153,7 @@ const GROOMER_COLORS = [
 ];
 
 /* ---------- state ---------- */
-const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], deletedBookings: [], scheduleDate: "", scheduleHiddenGroomers: [], scheduleMiniCalOpen: false, financialStart: "", financialEnd: "", financialCalMonth: "", financialCalOpen: false, upcomingRange: "day", bookingsOpen: { completed: false, cancelled: false, bin: false }, search: { name: "", breed: "" }, petsQuery: "" };
+const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], deletedBookings: [], leaves: [], scheduleDate: "", scheduleHiddenGroomers: [], scheduleMiniCalOpen: false, financialStart: "", financialEnd: "", financialCalMonth: "", financialCalOpen: false, upcomingRange: "day", bookingsOpen: { completed: false, cancelled: false, bin: false }, search: { name: "", breed: "" }, petsQuery: "" };
 const getCalendarId = () => (state.settings.find((s) => s.id === "calendar") || {}).calendarId || "";
 const getCustomBreeds = () => (state.settings.find((s) => s.id === "breeds") || {}).list || [];
 
@@ -568,6 +568,12 @@ function bookingDurationHours(b) {
 /* ---------- lookups ---------- */
 const groomerById = (id) => state.groomers.find((g) => g.id === id);
 function groomerColor(id) { const g = groomerById(id); return g ? g.color : "#c3c8d4"; }
+// A groomer's leave record covering `dateStr` (YYYY-MM-DD), if any — from/to are inclusive
+// day keys, so plain string comparison works. Used to flag "on leave" on the Schedule.
+function groomerLeaveOnDate(groomerId, dateStr) {
+  if (!groomerId) return null;
+  return state.leaves.find((lv) => lv.groomerId === groomerId && dateStr >= lv.from && dateStr <= lv.to) || null;
+}
 // Light background tint for a booking row (kept subtle so black text stays easily readable
 // over it) — same alpha level already used for the status-completed/cancelled badge pills.
 function hexToRgba(hex, alpha) {
@@ -1613,17 +1619,21 @@ function scheduleBodyDay(dateStr) {
     <div class="schedule-grid">
       <div class="schedule-head-row">
         <div class="schedule-axis-head"></div>
-        ${gridColumns.map((col) => `
-          <div class="schedule-col-head"><span class="dot" style="background:${col.groomer.color}"></span>${esc(col.groomer.name)}</div>`).join("")}
+        ${gridColumns.map((col) => {
+          const leave = groomerLeaveOnDate(col.groomer.id, dateStr);
+          return `<div class="schedule-col-head"><span class="dot" style="background:${col.groomer.color}"></span>${esc(col.groomer.name)}${leave ? ` <span class="leave-badge" title="${esc(leave.note || "On leave")}">🌴 On leave</span>` : ""}</div>`;
+        }).join("")}
       </div>
       <div class="schedule-body-row" style="height:${gridHeight}px">
         <div class="schedule-axis-body">
           ${hourMarks.map((m) => `<div class="axis-mark" style="top:${((m - openMin) / 60) * PX_PER_HOUR}px">${fmtMinutes(m)}</div>`).join("")}
         </div>
-        ${gridColumns.map((col) => `
-          <div class="schedule-col-body" data-date="${dateStr}" data-groomer-id="${col.groomer.id || ""}">
+        ${gridColumns.map((col) => {
+          const leave = groomerLeaveOnDate(col.groomer.id, dateStr);
+          return `<div class="schedule-col-body${leave ? " on-leave" : ""}" data-date="${dateStr}" data-groomer-id="${col.groomer.id || ""}">
             ${col.items.map((it) => scheduleBlockHtml(it, openMin, closeMin, col.groomer.color)).join("")}
-          </div>`).join("")}
+          </div>`;
+        }).join("")}
         ${nowLine}
       </div>
     </div>
@@ -1632,15 +1642,20 @@ function scheduleBodyDay(dateStr) {
   const summary = `
   <div class="card pad" style="margin-top:16px">
     <h3 class="section-title">Open slots</h3>
-    ${columns.map((col) => `
+    ${columns.map((col) => {
+      const leave = groomerLeaveOnDate(col.groomer.id, dateStr);
+      return `
       <div class="groomer-row">
         <span class="swatch" style="background:${col.groomer.color}"></span>
         <div class="grow"><strong>${esc(col.groomer.name)}</strong>
-          <div class="faint" style="font-size:13px">${col.free.length
-            ? col.free.map((f) => `${fmtMinutes(f.startMin)}–${fmtMinutes(f.endMin)}`).join(", ")
-            : "Fully booked"}</div>
+          <div class="faint" style="font-size:13px">${leave
+            ? `🌴 On leave${leave.note ? ` · ${esc(leave.note)}` : ""}`
+            : (col.free.length
+              ? col.free.map((f) => `${fmtMinutes(f.startMin)}–${fmtMinutes(f.endMin)}`).join(", ")
+              : "Fully booked")}</div>
         </div>
-      </div>`).join("")}
+      </div>`;
+    }).join("")}
   </div>`;
 
   return grid + summary;
@@ -1661,7 +1676,8 @@ function scheduleBodyWeek(dateStr) {
     const dow = new Date(d + "T00:00:00").getDay();
     const closed = (hours.closedDays || []).includes(dow);
     const items = closed ? [] : layoutLanesByGroomer(bookingsOnDate(d).filter((it) => !hiddenIds.includes(it.booking.groomerId)));
-    return { dateStr: d, dow, closed, items };
+    const leaveNames = visibleGroomers().filter((g) => groomerLeaveOnDate(g.id, d)).map((g) => g.name);
+    return { dateStr: d, dow, closed, items, leaveNames };
   });
 
   return `
@@ -1673,6 +1689,7 @@ function scheduleBodyWeek(dateStr) {
           <div class="schedule-col-head week" data-action="goto-day" data-date="${col.dateStr}" style="cursor:pointer">
             <div class="day-name">${DAY_NAMES_SHORT[col.dow]}</div>
             <span class="day-num ${col.dateStr === today ? "today" : ""}">${new Date(col.dateStr + "T00:00:00").getDate()}</span>
+            ${col.leaveNames.length ? `<div class="leave-chip" title="On leave">🌴 ${col.leaveNames.map(esc).join(", ")}</div>` : ""}
           </div>`).join("")}
       </div>
       <div class="schedule-body-row" style="height:${gridHeight}px">
@@ -1751,6 +1768,69 @@ function hoursModal() {
     await DB.put("settings", rec); upsertLocal("settings", rec);
     closeModal(); toast("Hours saved"); render();
   };
+}
+
+/* ---------- Groomer leave ---------- */
+// Record a groomer as away for a date range; shown on the Schedule so staff don't book them.
+// Display-only — it doesn't hard-block creating a booking for that groomer (staff can still
+// override for a special case), it just flags the day.
+function leaveModal() {
+  const leaves = [...state.leaves].sort((a, b) => (a.from || "").localeCompare(b.from || ""));
+  openModal(`
+    <h2>Groomer on leave</h2>
+    <div class="muted" style="margin-bottom:16px">Mark a groomer as away for some days — it shows on the Schedule.</div>
+    <div class="field"><label>Groomer</label>
+      <select id="lv-groomer">
+        <option value="">— Choose —</option>
+        ${state.groomers.map((g) => `<option value="${g.id}">${esc(g.name)}</option>`).join("")}
+      </select></div>
+    <div class="field-row">
+      <div class="field"><label>From</label><input id="lv-from" type="date" value="${todayKey()}"></div>
+      <div class="field"><label>To</label><input id="lv-to" type="date" value="${todayKey()}"></div>
+    </div>
+    <div class="field"><label>Note (optional)</label><input id="lv-note" placeholder="e.g. Annual leave, sick"></div>
+    <div class="row" style="justify-content:flex-end; margin-top:8px">
+      <button class="btn" data-close-modal>Cancel</button>
+      <button class="btn primary" id="save-leave">Save leave</button>
+    </div>
+    ${leaves.length ? `
+      <div class="divider"></div>
+      <h3 class="section-title">Scheduled leave</h3>
+      <div class="stack" style="gap:10px">
+        ${leaves.map((lv) => `
+          <div class="spread">
+            <div>
+              <strong>${esc(groomerName(lv.groomerId))}</strong>
+              <span class="muted" style="font-size:13px"> · ${fmtDate(lv.from)}${lv.to && lv.to !== lv.from ? ` – ${fmtDate(lv.to)}` : ""}</span>
+              ${lv.note ? `<div class="muted" style="font-size:12px">${esc(lv.note)}</div>` : ""}
+            </div>
+            <button class="icon-btn lv-del" data-id="${lv.id}" title="Remove">🗑</button>
+          </div>`).join("")}
+      </div>` : ""}
+  `);
+  $("#save-leave").onclick = async () => {
+    const groomerId = $("#lv-groomer").value;
+    const from = $("#lv-from").value;
+    const to = $("#lv-to").value || from;
+    if (!groomerId) { toast("Please choose a groomer"); return; }
+    if (!from) { toast("Please pick a start date"); return; }
+    if (to < from) { toast("The end date can't be before the start date"); return; }
+    const rec = { id: DB.uid("lv"), groomerId, from, to, note: $("#lv-note").value.trim(), createdAt: Date.now() };
+    try {
+      await DB.put("leaves", rec); upsertLocal("leaves", rec);
+      closeModal(); toast("Leave saved"); render();
+    } catch (err) {
+      // Most likely the "leaves" Firestore Security Rule hasn't been published yet.
+      console.error("Couldn't save leave", err);
+      toast("Couldn't save — the 'leaves' security rule may not be published yet.");
+    }
+  };
+  // Modal content isn't covered by bindView's delegation, so wire the delete buttons by hand.
+  $$(".lv-del").forEach((btn) => btn.onclick = async () => {
+    if (!confirm("Remove this leave?")) return;
+    await DB.del("leaves", btn.dataset.id); removeLocal("leaves", btn.dataset.id);
+    toast("Leave removed"); render(); leaveModal();
+  });
 }
 
 /* ---------- shared empty states ---------- */
@@ -1952,8 +2032,13 @@ function bookingModal(booking, prefillPet, slotPrefill) {
   const initialAddOnEnabled = !!(initialAddOnNote || initialAddOnPrice);
 
   openModal(`
-    <h2>${booking ? "Edit booking" : "New booking"}</h2>
-    <div class="muted" style="margin-bottom:16px">Appears on Google Calendar later with the groomer's color.</div>
+    <div class="spread" style="align-items:flex-start">
+      <div>
+        <h2>${booking ? "Edit booking" : "New booking"}</h2>
+        <div class="muted" style="margin-bottom:16px">Appears on Google Calendar later with the groomer's color.</div>
+      </div>
+      ${booking ? "" : `<button class="btn sm leave-btn" id="open-leave" style="margin-right:30px">🌴 Groomer on leave</button>`}
+    </div>
 
     <div class="row" style="align-items:flex-start; gap:16px; margin-bottom:6px">
       <div class="mini-avatar" id="bk-avatar">🐾</div>
@@ -2050,6 +2135,9 @@ function bookingModal(booking, prefillPet, slotPrefill) {
         <button class="btn primary" id="save-booking">${booking ? "Save" : "Create booking"}</button>
       </div>
     </div>`);
+
+  const leaveBtn = $("#open-leave");
+  if (leaveBtn) leaveBtn.onclick = () => leaveModal(); // swaps this form for the leave editor
 
   const avatarEl = $("#bk-avatar");
   const petInput = $("#b-pet");
@@ -3053,7 +3141,7 @@ document.addEventListener("click", (e) => {
 /* ===================================================================
    AUTH GATE + BOOT
 =================================================================== */
-const COLLECTIONS = ["pets", "groomers", "bookings", "admins", "settings", "activity", "calendarTombstones", "deletedBookings"];
+const COLLECTIONS = ["pets", "groomers", "bookings", "admins", "settings", "activity", "calendarTombstones", "deletedBookings", "leaves"];
 let watchers = [];
 
 function startWatchers() {
