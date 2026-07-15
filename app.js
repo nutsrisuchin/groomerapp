@@ -2091,6 +2091,7 @@ function bookingModal(booking, prefillPet, slotPrefill) {
       <div class="field"><label>Repeat</label>
         <select id="b-recur">${Object.entries(RECUR).map(([k, v]) => `<option value="${k}" ${(b.recurrence || "none") === k ? "selected" : ""}>${v.label}</option>`).join("")}</select></div>
     </div>
+    <div class="leave-warn" id="b-leave-warn" hidden></div>
     <div class="field" id="b-until-field" ${(b.recurrence && b.recurrence !== "none") ? "" : "hidden"}>
       <label>Period — repeat until</label>
       <input id="b-until" type="date" value="${esc(b.recurrenceUntil || "")}">
@@ -2308,6 +2309,26 @@ function bookingModal(booking, prefillPet, slotPrefill) {
   $("#b-weight").addEventListener("input", updateCostEstimate);
   $("#b-cost").addEventListener("input", () => { costTouched = true; updateCostEstimate(); });
 
+  // Warn (inline, and again at save) when the chosen groomer is on leave on the booking's day.
+  function bookingLeave() {
+    const gid = $("#b-groomer").value;
+    const groomerId = gid === "none" ? null : gid;
+    const startVal = $("#b-start").value;
+    if (!groomerId || !startVal) return null;
+    return groomerLeaveOnDate(groomerId, dateKey(new Date(startVal)));
+  }
+  function updateLeaveWarning() {
+    const el = $("#b-leave-warn"); if (!el) return;
+    const leave = bookingLeave();
+    if (leave) {
+      el.innerHTML = `🌴 <strong>${esc(groomerName($("#b-groomer").value))}</strong> is on leave that day${leave.note ? ` — ${esc(leave.note)}` : ""}.`;
+      el.hidden = false;
+    } else { el.hidden = true; el.textContent = ""; }
+  }
+  $("#b-groomer").addEventListener("change", updateLeaveWarning);
+  $("#b-start").addEventListener("change", updateLeaveWarning);
+  updateLeaveWarning();
+
   paintAvatar(); paintStatus();
   if (matchedPet) prefillHoursFromPet(); else updateTotal();
 
@@ -2326,6 +2347,9 @@ function bookingModal(booking, prefillPet, slotPrefill) {
     }
 
     const groomerId = $("#b-groomer").value === "none" ? null : $("#b-groomer").value;
+    // Warn (not hard-block) if the chosen groomer is on leave that day — staff can override.
+    const leave = bookingLeave();
+    if (leave && !confirm(`${groomerName(groomerId)} is on leave on ${fmtDate(new Date($("#b-start").value))}${leave.note ? ` — ${leave.note}` : ""}.\n\nBook anyway?`)) return;
     const breed = $("#b-breed").value.trim();
     const weight = $("#b-weight").value.trim();
     const species = $("#b-species").value;

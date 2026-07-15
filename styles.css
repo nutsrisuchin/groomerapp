@@ -372,6 +372,8 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 /* The "Groomer on leave" button in the New Booking header — black with white text. */
 .leave-btn{background:var(--ink); color:#fff; border-color:var(--ink)}
 .leave-btn:hover{background:#000}
+/* Inline amber warning in the booking form when the chosen groomer is on leave that day. */
+.leave-warn{background:#fff8e1; border:1px solid #f5d97a; color:#7a5b00; font-size:13px; font-weight:600; padding:8px 12px; border-radius:10px; margin-top:-4px}
 .schedule-block{position:absolute; border-radius:4px; padding:4px 6px; color:#fff; font-size:12px; line-height:1.35;
   overflow:hidden; cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,.2); text-shadow:0 1px 2px rgba(0,0,0,.35)}
 .schedule-block:hover{filter:brightness(1.08); z-index:2}
