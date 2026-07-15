@@ -1030,16 +1030,26 @@ function homeUpcomingList(bookings, petId, opts = {}) {
   });
   // data-date drives "click empty space in this day's row to add a booking on that day" —
   // wired in bindView(), which ignores clicks that land on a booking block (those edit).
-  return groups.map((g) => `
-    <div class="home-day-group" data-date="${dateKey(g.when)}" ${petId ? `data-pet-id="${petId}"` : ""} title="Click to add a booking on this day">
+  // The on-leave tag is skipped on the customer-facing pet-detail list (hidePrice) — it's
+  // internal shop info, not something to show a customer in a screenshot.
+  const showLeave = !opts.hidePrice;
+  return groups.map((g) => {
+    const dk = dateKey(g.when);
+    const onLeave = showLeave ? state.groomers.filter((gr) => groomerLeaveOnDate(gr.id, dk)).map((gr) => gr.name) : [];
+    return `
+    <div class="home-day-group" data-date="${dk}" ${petId ? `data-pet-id="${petId}"` : ""} title="Click to add a booking on this day">
       <div class="home-day-label">
         <div class="hd-dow">${esc(g.when.toLocaleDateString(undefined, { weekday: "short" }))}</div>
         <div class="hd-num">${g.when.getDate()}</div>
         <div class="hd-mon">${esc(g.when.toLocaleDateString(undefined, { month: "short" }))}</div>
         <div class="hd-add">＋</div>
       </div>
-      <div class="home-day-bookings">${g.items.map((b) => homeBookingRow(b, opts)).join("")}</div>
-    </div>`).join("");
+      <div class="home-day-bookings">
+        ${onLeave.length ? `<div class="home-leave-chip">🌴 ${esc(onLeave.join(", "))} on leave</div>` : ""}
+        ${g.items.map((b) => homeBookingRow(b, opts)).join("")}
+      </div>
+    </div>`;
+  }).join("");
 }
 // First time in the shop's business hours on `dateStr` with no booking at all — a reasonable
 // "next open slot" suggestion when adding a booking for that day from Home. Falls back to

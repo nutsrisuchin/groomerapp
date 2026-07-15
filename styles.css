@@ -286,6 +286,8 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 .hd-add{font-size:14px; font-weight:700; color:var(--ink-faint); opacity:.45; margin-top:2px; line-height:1}
 .home-day-group:hover .hd-add{opacity:1; color:var(--brand)}
 .home-day-bookings{flex:1; min-width:0; display:flex; flex-direction:column; gap:6px}
+/* Black "on leave" tag at the top of a day's bookings when a groomer is away that day. */
+.home-leave-chip{align-self:flex-start; background:var(--ink); color:#fff; font-size:12px; font-weight:700; padding:4px 10px; border-radius:8px}
 .home-booking{display:flex; align-items:center; gap:9px; border-radius:8px; padding:7px 11px; color:#fff; cursor:pointer;
   text-shadow:0 1px 2px rgba(0,0,0,.35); box-shadow:0 1px 2px rgba(0,0,0,.12)}
 .home-booking:hover{filter:brightness(1.05)}
