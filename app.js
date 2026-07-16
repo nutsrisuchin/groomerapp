@@ -538,6 +538,28 @@ function nextOccurrence(b) {
   }
   return d;
 }
+// Every occurrence of a booking from today up to `horizonEnd`, as Date objects. A one-time
+// booking yields its single date (if today or later) regardless of the horizon; a recurring
+// booking yields one entry per occurrence up to min(recurrenceUntil, horizonEnd) — this is how
+// the Home/pet upcoming lists show a weekly booking on each of its days, not just the next one.
+function upcomingOccurrences(b, horizonEnd) {
+  const today = startOfToday();
+  const first = new Date(b.start);
+  const until = b.recurrenceUntil ? new Date(b.recurrenceUntil + "T23:59:59") : null;
+  if (!b.recurrence || b.recurrence === "none") return first >= today ? [first] : [];
+  const cap = (until && until < horizonEnd) ? until : horizonEnd;
+  const out = [];
+  const d = new Date(first);
+  for (let i = 0; i < 500; i++) {
+    if (d > cap) break;
+    if (d >= today) out.push(new Date(d));
+    if (b.recurrence === "weekly") d.setDate(d.getDate() + 7);
+    else if (b.recurrence === "biweekly") d.setDate(d.getDate() + 14);
+    else if (b.recurrence === "monthly") d.setMonth(d.getMonth() + 1);
+    else break;
+  }
+  return out;
+}
 // True once a pending (unresolved) booking's date has fully passed — a one-time booking
 // whose day is behind us, or a recurring series that has ended (recurrenceUntil passed) —
 // and it still needs someone to confirm it as Completed or Cancelled.
@@ -1014,19 +1036,27 @@ function bookingRow(b, opts = {}) {
   </div>`;
 }
 
+// How far ahead the Home/pet upcoming lists expand recurring bookings. One-time bookings show
+// regardless of distance; a recurring one shows each occurrence up to this horizon (or its
+// recurrenceUntil, whichever is sooner) — bounds an open-ended weekly booking to a sane count.
+const UPCOMING_HORIZON_DAYS = 90;
+
 // The Upcoming list (Home, and reused on the pet-detail page), grouped by day with a Google-
-// Calendar-style date label on the left of each day's block of bookings. `bookings` arrives
-// already sorted ascending by occurrence, so grouping in order yields chronological day groups.
-// `petId` (pet-detail only) makes "click a day to add a booking" pre-fill that pet. `opts` is
-// forwarded to each row (e.g. { hidePrice: true } on the pet page).
+// Calendar-style date label on the left of each day's block of bookings. Recurring bookings are
+// expanded so each occurrence appears under its own day (not just the next one). `petId`
+// (pet-detail only) makes "click a day to add a booking" pre-fill that pet. `opts` is forwarded
+// to each row (e.g. { hidePrice: true } on the pet page).
 function homeUpcomingList(bookings, petId, opts = {}) {
+  const horizonEnd = new Date(startOfToday().getTime() + UPCOMING_HORIZON_DAYS * 86400000);
+  const entries = [];
+  bookings.forEach((b) => upcomingOccurrences(b, horizonEnd).forEach((when) => entries.push({ b, when })));
+  entries.sort((a, z) => a.when - z.when);
   const groups = [];
   const byKey = new Map();
-  bookings.forEach((b) => {
-    const when = nextOccurrence(b) || new Date(b.start);
+  entries.forEach(({ b, when }) => {
     const key = dateKey(when);
     if (!byKey.has(key)) { const g = { when, items: [] }; byKey.set(key, g); groups.push(g); }
-    byKey.get(key).items.push(b);
+    byKey.get(key).items.push({ b, when });
   });
   // data-date drives "click empty space in this day's row to add a booking on that day" —
   // wired in bindView(), which ignores clicks that land on a booking block (those edit).
@@ -1046,7 +1076,7 @@ function homeUpcomingList(bookings, petId, opts = {}) {
       </div>
       <div class="home-day-bookings">
         ${onLeave.length ? `<div class="home-leave-chip">🌴 ${esc(onLeave.join(", "))} on leave</div>` : ""}
-        ${g.items.map((b) => homeBookingRow(b, opts)).join("")}
+        ${g.items.map(({ b, when }) => homeBookingRow(b, opts, when)).join("")}
       </div>
     </div>`;
   }).join("");
@@ -1069,8 +1099,8 @@ function firstFreeMinuteOnDay(dateStr) {
 // price from the row — used on the pet page, which staff screenshot to send to customers who
 // shouldn't see the preliminary estimate. bookingRow() above stays the full-detail version
 // used on the Bookings/Financial/Bin lists — deliberately not touched.
-function homeBookingRow(b, opts = {}) {
-  const when = nextOccurrence(b) || new Date(b.start);
+function homeBookingRow(b, opts = {}, when) {
+  when = when || nextOccurrence(b) || new Date(b.start); // the specific occurrence being shown
   const total = bookingDurationHours(b);
   const end = total ? new Date(when.getTime() + total * 3600 * 1000) : null;
   const timeRange = end ? `${fmtTime(when)}–${fmtTime(end)}` : fmtTime(when);
