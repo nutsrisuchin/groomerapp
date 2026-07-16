@@ -133,6 +133,14 @@
       let rule = RRULE_BASE[booking.recurrence];
       if (booking.recurrenceUntil) rule += `;UNTIL=${booking.recurrenceUntil.replace(/-/g, "")}T235959Z`;
       event.recurrence = [`RRULE:${rule}`];
+      // "Delete this occurrence" exceptions become EXDATE lines, each at the series' start
+      // time-of-day in the same zone so they line up with a generated instance.
+      const ex = booking.excludedDates || [];
+      if (ex.length) {
+        const s = new Date(booking.start);
+        const hms = `${String(s.getHours()).padStart(2, "0")}${String(s.getMinutes()).padStart(2, "0")}00`;
+        ex.forEach((dk) => event.recurrence.push(`EXDATE;TZID=${timeZone}:${dk.replace(/-/g, "")}T${hms}`));
+      }
     }
     return event;
   }

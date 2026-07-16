@@ -244,7 +244,9 @@ original, restorable via the Bookings page's "🗑 Bin" section; Owner/Admin onl
 - **`bookings`**: `petId` (optional — a booking can reference a free-text `petName`/`breed`
   without a real pet record), `groomerId` (`null` = "No preference", rendered as its own
   Schedule column), `start` (ISO string), `recurrence` (`none`/`weekly`/`biweekly`/`monthly`)
-  + `recurrenceUntil`, `services` (array of `SERVICES` labels) + `serviceHours` (per-service
+  + `recurrenceUntil` + `excludedDates` (array of `YYYY-MM-DD` "delete this occurrence"
+  exceptions — honored by `occurrenceOnDate`/`nextOccurrence`/`upcomingOccurrences`, and
+  emitted as Calendar EXDATE lines), `services` (array of `SERVICES` labels) + `serviceHours` (per-service
   duration, drives Calendar event length), `totalCost` (staff-overridable, falls back to a
   weight-tier estimate when null), `notes`, `status` (`pending`/`completed`/`cancelled`) +
   `completedAt`, and the Calendar sync fields `calendarEventId`/`calendarDirty`/`calendarSyncError`.

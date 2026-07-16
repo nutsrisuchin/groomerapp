@@ -472,6 +472,7 @@ function occurrenceOnDate(booking, dateStr) {
   const start = new Date(booking.start);
   const startKey = dateKey(start);
   if (dateStr < startKey) return null;
+  if ((booking.excludedDates || []).includes(dateStr)) return null; // a "delete this occurrence" exception
   if (booking.recurrenceUntil && dateStr > booking.recurrenceUntil) return null;
   const rec = booking.recurrence || "none";
   if (rec === "none") { if (dateStr !== startKey) return null; }
@@ -525,16 +526,19 @@ function nextOccurrence(b) {
   const today = startOfToday();
   const until = b.recurrenceUntil ? new Date(b.recurrenceUntil + "T23:59:59") : null;
   if (until && first > until) return null;
-  if (first >= today || b.recurrence === "none" || !b.recurrence) return first;
+  if (!b.recurrence || b.recurrence === "none") return first;
+  // Recurring: walk forward to the first occurrence that's today-or-later AND not a deleted
+  // "this occurrence" exception (excludedDates).
+  const excluded = new Set(b.excludedDates || []);
   const d = new Date(first);
   const guard = 400;
   for (let i = 0; i < guard; i++) {
-    if (d >= today) return d;
+    if (until && d > until) return null;
+    if (d >= today && !excluded.has(dateKey(d))) return d;
     if (b.recurrence === "weekly") d.setDate(d.getDate() + 7);
     else if (b.recurrence === "biweekly") d.setDate(d.getDate() + 14);
     else if (b.recurrence === "monthly") d.setMonth(d.getMonth() + 1);
     else return first;
-    if (until && d > until) return null;
   }
   return d;
 }
@@ -548,11 +552,12 @@ function upcomingOccurrences(b, horizonEnd) {
   const until = b.recurrenceUntil ? new Date(b.recurrenceUntil + "T23:59:59") : null;
   if (!b.recurrence || b.recurrence === "none") return first >= today ? [first] : [];
   const cap = (until && until < horizonEnd) ? until : horizonEnd;
+  const excluded = new Set(b.excludedDates || []);
   const out = [];
   const d = new Date(first);
   for (let i = 0; i < 500; i++) {
     if (d > cap) break;
-    if (d >= today) out.push(new Date(d));
+    if (d >= today && !excluded.has(dateKey(d))) out.push(new Date(d));
     if (b.recurrence === "weekly") d.setDate(d.getDate() + 7);
     else if (b.recurrence === "biweekly") d.setDate(d.getDate() + 14);
     else if (b.recurrence === "monthly") d.setMonth(d.getMonth() + 1);
@@ -1114,13 +1119,56 @@ function homeBookingRow(b, opts = {}, when) {
   const sub = [b.breed, (b.services || []).map(serviceLabel).join(", "), costLabel].filter(Boolean).join(" · ");
   const thumb = (pet && pet.photo) ? `<img class="hb-thumb" src="${pet.photo}" alt="">` : "";
   return `
-  <div class="home-booking" style="background:${groomerColor(b.groomerId)}" data-action="edit-booking" data-id="${b.id}">
+  <div class="home-booking" style="background:${groomerColor(b.groomerId)}" data-action="edit-booking" data-id="${b.id}" data-occ="${dateKey(when)}">
     <div class="hb-text">
       <div class="hb-top"><span class="hb-time">${timeRange}</span><span class="hb-name">${esc(b.petName)}</span></div>
       ${sub ? `<div class="hb-sub">${esc(sub)}</div>` : ""}
     </div>
     ${thumb}
   </div>`;
+}
+
+// Soft-deletes a whole booking to the Bin (backup + tombstone + activity) without any confirm
+// prompt — the confirm lives at each call site. Shared by the "Delete" action and the
+// recurring-delete popup's "entire series" choice.
+async function deleteBookingToBin(id) {
+  const deleted = state.bookings.find((b) => b.id === id);
+  if (deleted) {
+    // Best-effort backup — must never block the actual deletion (e.g. if deletedBookings'
+    // security rule isn't published yet).
+    try {
+      const trashed = { ...deleted, deletedAt: Date.now(), deletedBy: currentAdminName() };
+      await DB.put("deletedBookings", trashed); upsertLocal("deletedBookings", trashed);
+    } catch (err) { console.error("Couldn't back up to Bin (deleting anyway)", err); }
+  }
+  await DB.del("bookings", id); removeLocal("bookings", id); render();
+  if (deleted && deleted.calendarEventId) {
+    const tomb = { id: DB.uid("tomb"), calendarId: getCalendarId() || null, eventId: deleted.calendarEventId, petName: deleted.petName, deletedAt: Date.now() };
+    await DB.put("calendarTombstones", tomb); upsertLocal("calendarTombstones", tomb); reconcileCalendar();
+  }
+  if (deleted) logActivity("booking", "deleted", `${deleted.petName}${deleted.breed ? ` (${deleted.breed})` : ""} with ${groomerName(deleted.groomerId)}`);
+}
+
+// Asked when deleting a recurring booking: remove just the clicked occurrence (an entry in
+// excludedDates — not sent to the Bin, since it's just an exception on the still-live series)
+// or the whole series (to the Bin, restorable). occKey is the YYYY-MM-DD of the occurrence.
+function deleteRecurringModal(b, occKey) {
+  const occLabel = fmtDate(new Date(occKey + "T00:00:00"));
+  openModal(`
+    <h2>Delete recurring booking</h2>
+    <div class="muted" style="margin-bottom:16px">“${esc(b.petName)}” repeats ${(RECUR[b.recurrence] || RECUR.none).label.toLowerCase()}. What would you like to delete?</div>
+    <div class="stack" style="gap:10px">
+      <button class="btn block" id="del-occ">Just this one — ${esc(occLabel)}</button>
+      <button class="btn block danger" id="del-series">The entire series</button>
+      <button class="btn block" data-close-modal>Cancel</button>
+    </div>`);
+  $("#del-occ").onclick = async () => {
+    const rec = { ...b, excludedDates: [...new Set([...(b.excludedDates || []), occKey])], calendarDirty: true };
+    await DB.put("bookings", rec); upsertLocal("bookings", rec);
+    closeModal(); toast("Occurrence deleted"); render(); reconcileCalendar();
+    logActivity("booking", "updated", `Removed ${occLabel} from ${b.petName}'s recurring booking`);
+  };
+  $("#del-series").onclick = async () => { closeModal(); await deleteBookingToBin(b.id); toast("Series moved to Bin"); };
 }
 
 // "confirmed น้อง {name} {breed} {date & time}" — ready to paste to a customer.
@@ -1601,7 +1649,7 @@ function layoutLanesByGroomer(items) {
   return placed;
 }
 
-function scheduleBlockHtml(it, openMin, closeMin, color) {
+function scheduleBlockHtml(it, openMin, closeMin, color, occKey) {
   const top = ((Math.max(it.startMin, openMin) - openMin) / 60) * PX_PER_HOUR;
   const rawH = ((Math.min(it.endMin, closeMin) - Math.max(it.startMin, openMin)) / 60) * PX_PER_HOUR;
   const h = Math.max(rawH, 24);
@@ -1612,7 +1660,7 @@ function scheduleBlockHtml(it, openMin, closeMin, color) {
   const width = `calc(${widthPct}% - ${laneCount === 1 ? 8 : 4}px)`;
   const timeLabel = `${fmtMinutes(it.startMin)}–${fmtMinutes(it.endMin)}`;
   // Inset top/height by 1-2px so back-to-back bookings show a visible seam instead of blending together.
-  return `<div class="schedule-block" style="top:${top + 1}px; height:${Math.max(h - 2, 20)}px; left:${left}; width:${width}; background:${color}" data-action="edit-booking" data-id="${b.id}" title="${esc(b.petName)}${b.breed ? " " + esc(b.breed) : ""} · ${timeLabel}">
+  return `<div class="schedule-block" style="top:${top + 1}px; height:${Math.max(h - 2, 20)}px; left:${left}; width:${width}; background:${color}" data-action="edit-booking" data-id="${b.id}"${occKey ? ` data-occ="${occKey}"` : ""} title="${esc(b.petName)}${b.breed ? " " + esc(b.breed) : ""} · ${timeLabel}">
     <div class="sb-time">${timeLabel}</div>
     <div class="sb-name">${esc(b.petName)}</div>
     ${(b.services || []).length ? `<div class="sb-services">${esc(b.services.map(serviceLabel).join(", "))}</div>` : ""}
@@ -1671,7 +1719,7 @@ function scheduleBodyDay(dateStr) {
         ${gridColumns.map((col) => {
           const leave = groomerLeaveOnDate(col.groomer.id, dateStr);
           return `<div class="schedule-col-body${leave ? " on-leave" : ""}" data-date="${dateStr}" data-groomer-id="${col.groomer.id || ""}">
-            ${col.items.map((it) => scheduleBlockHtml(it, openMin, closeMin, col.groomer.color)).join("")}
+            ${col.items.map((it) => scheduleBlockHtml(it, openMin, closeMin, col.groomer.color, dateStr)).join("")}
           </div>`;
         }).join("")}
         ${nowLine}
@@ -1739,7 +1787,7 @@ function scheduleBodyWeek(dateStr) {
         ${cols.map((col) => `
           <div class="schedule-col-body" data-date="${col.dateStr}">
             ${col.closed ? `<div class="closed-overlay">Closed</div>`
-              : col.items.map((it) => scheduleBlockHtml(it, openMin, closeMin, groomerColor(it.booking.groomerId))).join("")}
+              : col.items.map((it) => scheduleBlockHtml(it, openMin, closeMin, groomerColor(it.booking.groomerId), col.dateStr)).join("")}
             ${(col.dateStr === now.dateStr && now.min >= openMin && now.min <= closeMin)
               ? `<div class="now-line" style="top:${((now.min - openMin) / 60) * PX_PER_HOUR}px; left:0; right:0"><span class="now-dot"></span></div>` : ""}
           </div>`).join("")}
@@ -2042,7 +2090,7 @@ function historyModal(pet) {
 // slotPrefill (only used for a brand-new booking, never when editing): { start: Date,
 // groomerId: string|null } — set when opened by clicking an empty spot on the Schedule
 // grid, so the date/time/groomer are already filled in instead of defaulting to "now".
-function bookingModal(booking, prefillPet, slotPrefill) {
+function bookingModal(booking, prefillPet, slotPrefill, occurrenceKey) {
   const b = booking || {};
   const now = new Date(Date.now() + 60 * 60 * 1000); now.setMinutes(0, 0, 0);
   const startVal = b.start ? toLocalInput(b.start) : toLocalInput((slotPrefill && slotPrefill.start) || now);
@@ -2373,7 +2421,15 @@ function bookingModal(booking, prefillPet, slotPrefill) {
   if (matchedPet) prefillHoursFromPet(); else updateTotal();
 
   const deleteBtn = $("#delete-booking-btn");
-  if (deleteBtn) deleteBtn.onclick = async () => { closeModal(); await handleAction("del-booking", { id: b.id }); };
+  if (deleteBtn) deleteBtn.onclick = async () => {
+    // For a recurring booking, ask whether to remove just this occurrence or the whole series.
+    if (b.recurrence && b.recurrence !== "none") {
+      const occ = occurrenceKey || dateKey(nextOccurrence(b) || new Date(b.start));
+      deleteRecurringModal(b, occ);
+    } else {
+      closeModal(); await handleAction("del-booking", { id: b.id });
+    }
+  };
 
   $("#save-booking").onclick = async () => {
     const petName = petInput.value.trim();
@@ -2431,6 +2487,7 @@ function bookingModal(booking, prefillPet, slotPrefill) {
       services: checkedServices.map((c) => c.dataset.svc),
       serviceHours,
       hairLength,
+      excludedDates: recurrence !== "none" ? (b.excludedDates || []) : [], // keep "deleted occurrence" exceptions
       addOnNote: $("#b-addon-check").checked ? $("#b-addon-note").value.trim() : "",
       addOnPrice: $("#b-addon-check").checked ? (Number($("#b-addon-price").value) || 0) : 0,
       totalCost: $("#b-cost").value === "" ? null : Number($("#b-cost").value),
@@ -2983,7 +3040,7 @@ async function handleAction(action, data) {
     } break;
     case "new-booking": bookingModal(null); break;
     case "book-pet": bookingModal(null, state.pets.find((p) => p.id === data.id)); break;
-    case "edit-booking": bookingModal(state.bookings.find((b) => b.id === data.id)); break;
+    case "edit-booking": bookingModal(state.bookings.find((b) => b.id === data.id), null, null, data.occ || null); break;
     case "copy-confirm": {
       const b = state.bookings.find((x) => x.id === data.id);
       if (!b) break;
@@ -2993,30 +3050,7 @@ async function handleAction(action, data) {
     } break;
     case "del-booking":
       if (confirm("Delete this booking? It'll move to the Bin, where it can be restored later.")) {
-        const deleted = state.bookings.find((b) => b.id === data.id);
-        if (deleted) {
-          // Soft delete: the full record moves to deletedBookings (same id, so restoring is
-          // just moving it back) instead of being destroyed outright — see the Bin section.
-          // Best-effort like Calendar sync: the backup copy must never block the actual
-          // deletion (e.g. if deletedBookings' security rule isn't published yet).
-          try {
-            const trashed = { ...deleted, deletedAt: Date.now(), deletedBy: currentAdminName() };
-            await DB.put("deletedBookings", trashed);
-            upsertLocal("deletedBookings", trashed);
-          } catch (err) {
-            console.error("Couldn't back up to Bin (deleting anyway)", err);
-          }
-        }
-        await DB.del("bookings", data.id); removeLocal("bookings", data.id); toast("Booking moved to Bin"); render();
-        if (deleted && deleted.calendarEventId) {
-          // Always queue a tombstone, connected or not — whichever device is connected
-          // (this one now, or another one later) will pick it up via reconcileCalendar().
-          const tomb = { id: DB.uid("tomb"), calendarId: getCalendarId() || null, eventId: deleted.calendarEventId, petName: deleted.petName, deletedAt: Date.now() };
-          await DB.put("calendarTombstones", tomb);
-          upsertLocal("calendarTombstones", tomb);
-          reconcileCalendar();
-        }
-        if (deleted) logActivity("booking", "deleted", `${deleted.petName}${deleted.breed ? ` (${deleted.breed})` : ""} with ${groomerName(deleted.groomerId)}`);
+        await deleteBookingToBin(data.id); toast("Booking moved to Bin");
       }
       break;
     case "restore-booking": {
