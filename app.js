@@ -692,6 +692,11 @@ function removeLocal(name, id) {
 // after a background data change (saving/completing/deleting a booking, another device's
 // edit arriving via onSnapshot, etc.) — those should leave the user's scroll position alone.
 let lastRenderedPage = null;
+// Scroll position of the Pets list, remembered when the user opens a pet, so returning to
+// the list (via "← All pets" or the nav) lands back where they were instead of at the top —
+// handy for a long, scrolled-down pet list where they're editing one pet after another.
+let petsScrollY = 0;
+let restorePetsScroll = false;
 function render() {
   // Self-heals if a role's access changed while this session was sitting on a page it can
   // no longer see (e.g. the App Owner just unchecked a section for their role, live).
@@ -714,12 +719,17 @@ function render() {
   else if (state.view === "financial") v.innerHTML = viewFinancial();
   bindView();
   const page = `${state.view}:${state.petId || ""}`;
-  if (page !== lastRenderedPage) window.scrollTo({ top: 0 });
+  if (page !== lastRenderedPage) {
+    if (state.view === "pets" && restorePetsScroll) { window.scrollTo({ top: petsScrollY }); restorePetsScroll = false; }
+    else window.scrollTo({ top: 0 });
+  }
   lastRenderedPage = page;
 }
 
 function go(view, petId = null) {
   if (!canAccessView(view)) { toast("You don't have access to that section"); return; }
+  // Opening a pet from the list: stash where the list was scrolled so returning restores it.
+  if (state.view === "pets" && view === "pet") { petsScrollY = window.scrollY; restorePetsScroll = true; }
   state.view = view; state.petId = petId; render();
 }
 
