@@ -246,7 +246,11 @@ original, restorable via the Bookings page's "🗑 Bin" section; Owner/Admin onl
   Schedule column), `start` (ISO string), `recurrence` (`none`/`weekly`/`biweekly`/`monthly`)
   + `recurrenceUntil` + `excludedDates` (array of `YYYY-MM-DD` "delete this occurrence"
   exceptions — honored by `occurrenceOnDate`/`nextOccurrence`/`upcomingOccurrences`, and
-  emitted as Calendar EXDATE lines), `services` (array of `SERVICES` labels) + `serviceHours` (per-service
+  emitted as Calendar EXDATE lines), `seriesId` (set only on a booking that was split out of a
+  series by editing "just this one" — the occurrence gets added to the series' `excludedDates`
+  and the edits are saved as a new standalone `recurrence:"none"` booking that records which
+  series it came from; note it must be given a fresh `calendarEventId:null` so it becomes its
+  own Calendar event instead of PATCHing the series'), `services` (array of `SERVICES` labels) + `serviceHours` (per-service
   duration, drives Calendar event length), `totalCost` (staff-overridable, falls back to a
   weight-tier estimate when null), `notes`, `status` (`pending`/`completed`/`cancelled`) +
   `completedAt`, and the Calendar sync fields `calendarEventId`/`calendarDirty`/`calendarSyncError`.

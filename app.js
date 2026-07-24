@@ -1181,6 +1181,40 @@ function deleteRecurringModal(b, occKey) {
   $("#del-series").onclick = async () => { closeModal(); await deleteBookingToBin(b.id); toast("Series moved to Bin"); };
 }
 
+// Asked when SAVING an edit to a recurring booking: does the change apply to just the
+// occurrence the user opened, or to the whole series? Deliberately NOT built on openModal()
+// — that would replace the booking form's DOM, so "Cancel" would throw away everything the
+// user just typed. Instead this is its own layer stacked on top (z-index above .modal-host),
+// leaving the form untouched underneath. Resolves "one" | "series" | null (cancelled).
+// canSplit is false when the repeat pattern itself was changed — that can only mean the series.
+function askRecurringSaveScope(b, occKey, canSplit) {
+  return new Promise((resolve) => {
+    const occLabel = fmtDate(new Date(occKey + "T00:00:00"));
+    const host = document.createElement("div");
+    host.className = "scope-sheet";
+    host.innerHTML = `
+      <div class="scope-backdrop"></div>
+      <div class="scope-card">
+        <h2>Save recurring booking</h2>
+        <div class="muted" style="margin-bottom:16px">“${esc(b.petName)}” repeats ${(RECUR[b.recurrence] || RECUR.none).label.toLowerCase()}. Where should this change apply?</div>
+        <div class="stack" style="gap:10px">
+          ${canSplit ? `<button class="btn block" data-scope="one">Just this one — ${esc(occLabel)}</button>` : ""}
+          <button class="btn block primary" data-scope="series">The entire series</button>
+          <button class="btn block" data-scope="cancel">Cancel</button>
+        </div>
+        <div class="help" style="margin-top:12px">${canSplit
+          ? `“Just this one” saves ${esc(occLabel)} as its own separate booking and leaves the rest of the series exactly as it is.`
+          : `You changed the repeat pattern, so this change can only apply to the whole series.`}</div>
+      </div>`;
+    document.body.appendChild(host);
+    const finish = (val) => { host.remove(); document.removeEventListener("keydown", onKey); resolve(val); };
+    function onKey(e) { if (e.key === "Escape") finish(null); }
+    document.addEventListener("keydown", onKey);
+    $$("[data-scope]", host).forEach((el) => el.onclick = () => finish(el.dataset.scope === "cancel" ? null : el.dataset.scope));
+    host.querySelector(".scope-backdrop").onclick = () => finish(null);
+  });
+}
+
 // "confirmed น้อง {name} {breed} {date & time}" — ready to paste to a customer.
 // Uses the upcoming occurrence for recurring bookings (same date bookingRow shows), not the original start.
 function bookingConfirmMessage(b) {
@@ -2129,13 +2163,25 @@ function bookingModal(booking, prefillPet, slotPrefill, occurrenceKey) {
   const initialAddOnPrice = b.addOnPrice || "";
   const initialAddOnEnabled = !!(initialAddOnNote || initialAddOnPrice);
 
+  // Which occurrence of a recurring series this modal was opened on — set from the clicked
+  // Home row / Schedule block, else the next upcoming one (e.g. opened from the Bookings
+  // list, which has no single occurrence). Drives both the delete and the save prompts.
+  const wasRecurring = !!(booking && b.recurrence && b.recurrence !== "none");
+  const occKeyForEdit = booking ? (occurrenceKey || dateKey(nextOccurrence(b) || new Date(b.start))) : null;
+  // Jump straight to the customer's profile — the booking's pet, when it's a real pet record.
+  // Hidden while already on that pet's page (it'd go nowhere) and on new bookings (navigating
+  // away would discard the form the user is still filling in).
+  const profilePetId = booking && matchedPet && !(state.view === "pet" && state.petId === matchedPet.id) ? matchedPet.id : null;
+
   openModal(`
     <div class="spread" style="align-items:flex-start">
       <div>
         <h2>${booking ? "Edit booking" : "New booking"}</h2>
         <div class="muted" style="margin-bottom:16px">Appears on Google Calendar later with the groomer's color.</div>
       </div>
-      ${booking ? "" : `<button class="btn sm leave-btn" id="open-leave" style="margin-right:30px">🌴 Groomer on leave</button>`}
+      ${booking
+        ? (profilePetId ? `<button class="btn sm" id="open-pet-profile" style="margin-right:30px">👤 Pet profile</button>` : "")
+        : `<button class="btn sm leave-btn" id="open-leave" style="margin-right:30px">🌴 Groomer on leave</button>`}
     </div>
 
     <div class="row" style="align-items:flex-start; gap:16px; margin-bottom:6px">
@@ -2237,6 +2283,9 @@ function bookingModal(booking, prefillPet, slotPrefill, occurrenceKey) {
 
   const leaveBtn = $("#open-leave");
   if (leaveBtn) leaveBtn.onclick = () => leaveModal(); // swaps this form for the leave editor
+
+  const profileBtn = $("#open-pet-profile");
+  if (profileBtn) profileBtn.onclick = () => { closeModal(); go("pet", profilePetId); };
 
   const avatarEl = $("#bk-avatar");
   const petInput = $("#b-pet");
@@ -2433,9 +2482,8 @@ function bookingModal(booking, prefillPet, slotPrefill, occurrenceKey) {
   const deleteBtn = $("#delete-booking-btn");
   if (deleteBtn) deleteBtn.onclick = async () => {
     // For a recurring booking, ask whether to remove just this occurrence or the whole series.
-    if (b.recurrence && b.recurrence !== "none") {
-      const occ = occurrenceKey || dateKey(nextOccurrence(b) || new Date(b.start));
-      deleteRecurringModal(b, occ);
+    if (wasRecurring) {
+      deleteRecurringModal(b, occKeyForEdit);
     } else {
       closeModal(); await handleAction("del-booking", { id: b.id });
     }
@@ -2456,6 +2504,16 @@ function bookingModal(booking, prefillPet, slotPrefill, occurrenceKey) {
     // Warn (not hard-block) if the chosen groomer is on leave that day — staff can override.
     const leave = bookingLeave();
     if (leave && !confirm(`${groomerName(groomerId)} is on leave on ${fmtDate(new Date($("#b-start").value))}${leave.note ? ` — ${leave.note}` : ""}.\n\nBook anyway?`)) return;
+
+    // Editing an occurrence of a recurring series: ask whether the change is for just that day
+    // or the whole series. Asked here, before ANY write below, so cancelling really does leave
+    // everything untouched (an earlier position could already have created a new pet record).
+    let scope = null;
+    if (wasRecurring) {
+      const patternChanged = $("#b-recur").value !== (b.recurrence || "none") || ($("#b-until").value || null) !== (b.recurrenceUntil || null);
+      scope = await askRecurringSaveScope(b, occKeyForEdit, !patternChanged);
+      if (!scope) return; // cancelled — nothing written, the form stays open with every edit intact
+    }
     const breed = $("#b-breed").value.trim();
     const weight = $("#b-weight").value.trim();
     const species = $("#b-species").value;
@@ -2507,6 +2565,21 @@ function bookingModal(booking, prefillPet, slotPrefill, occurrenceKey) {
       status: b.status || "pending",
       completedAt: b.completedAt || null,
     };
+
+    // "Just this one" splits that date out of the series: the occurrence is excluded from the
+    // original record, and the edits are saved as a brand-new standalone booking on its own date.
+    const splitOne = scope === "one";
+    if (splitOne) {
+      const series = { ...b, excludedDates: [...new Set([...(b.excludedDates || []), occKeyForEdit])], calendarDirty: true };
+      await DB.put("bookings", series); upsertLocal("bookings", series);
+      Object.assign(rec, {
+        id: DB.uid("bk"), createdAt: Date.now(),
+        recurrence: "none", recurrenceUntil: null, excludedDates: [],
+        calendarEventId: null, // must become its own Calendar event, never a PATCH of the series'
+        seriesId: b.id,        // provenance: which series this was split out of
+      });
+    }
+
     await DB.put("bookings", rec);
     upsertLocal("bookings", rec);
     render();
@@ -2515,7 +2588,7 @@ function bookingModal(booking, prefillPet, slotPrefill, occurrenceKey) {
     logActivity("booking", booking ? "updated" : "created",
       `${rec.petName}${rec.breed ? ` (${rec.breed})` : ""} with ${groomerName(rec.groomerId)} — ${fmtDate(rec.start)} ${fmtTime(rec.start)}`);
     // New booking → swap the form for a copy-the-confirmation popup; editing just closes.
-    if (booking) { closeModal(); toast("Booking updated"); }
+    if (booking) { closeModal(); toast(splitOne ? "This booking updated — rest of the series unchanged" : "Booking updated"); }
     else { toast("Booking created"); confirmCopyModal(rec); }
   };
 }
@@ -3217,7 +3290,9 @@ async function handleAction(action, data) {
 document.addEventListener("click", (e) => {
   if (e.target.closest("[data-close-modal]")) closeModal();
 });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+// Escape closes the modal — unless a scope sheet (see askRecurringSaveScope) is stacked on
+// top of it, in which case Escape belongs to that sheet and the form underneath must survive.
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !document.querySelector(".scope-sheet")) closeModal(); });
 document.addEventListener("click", (e) => {
   const box = document.getElementById("pet-suggest");
   const input = document.getElementById("b-pet");
