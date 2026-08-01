@@ -63,6 +63,9 @@ The app needs its own free Firebase project to store shared data. About 10 minut
        match /deletedBookings/{id} {
          allow read, create, delete: if canDelete(); // the Bin — same role gate as deleting a booking
        }
+       match /deletedPets/{id} {
+         allow read, create, delete: if canDelete(); // the Pets-page Bin — same role gate as deleting a pet
+       }
        match /leaves/{id} {
          allow read, create, update, delete: if isStaff(); // groomer on-leave records shown on the Schedule
        }

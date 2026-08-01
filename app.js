@@ -153,7 +153,7 @@ const GROOMER_COLORS = [
 ];
 
 /* ---------- state ---------- */
-const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], deletedBookings: [], leaves: [], scheduleDate: "", scheduleHiddenGroomers: [], scheduleMiniCalOpen: false, financialStart: "", financialEnd: "", financialCalMonth: "", financialCalOpen: false, upcomingRange: "day", bookingsOpen: { completed: false, cancelled: false, bin: false }, search: { name: "", breed: "" }, petsQuery: "" };
+const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], deletedBookings: [], deletedPets: [], leaves: [], scheduleDate: "", scheduleHiddenGroomers: [], scheduleMiniCalOpen: false, financialStart: "", financialEnd: "", financialCalMonth: "", financialCalOpen: false, upcomingRange: "day", bookingsOpen: { completed: false, cancelled: false, bin: false }, petsBinOpen: false, search: { name: "", breed: "" }, petsQuery: "" };
 const getCalendarId = () => (state.settings.find((s) => s.id === "calendar") || {}).calendarId || "";
 const getCustomBreeds = () => (state.settings.find((s) => s.id === "breeds") || {}).list || [];
 
@@ -413,6 +413,7 @@ function timeAgo(ms) {
 const ACTIVITY_ICON = {
   booking: { created: "📅", updated: "✏️", deleted: "🗑", restored: "↩️", purged: "🗑" },
   groomer: { created: "🧑‍🎨", updated: "✏️", deleted: "🗑" },
+  pet: { created: "🐾", updated: "✏️", deleted: "🗑", restored: "↩️", purged: "🗑" },
 };
 
 /* ---------- date helpers ---------- */
@@ -829,7 +830,8 @@ function viewPets() {
   </div>
   ${pets.length ? `<div class="grid pets">${pets.map(petCard).join("")}</div>`
     : (q ? emptyInline("No pets match your search.")
-         : emptyBlock("🐾", "No pet profiles yet", "Add your first furry client to get started.", "new-pet", "Add a pet"))}`;
+         : emptyBlock("🐾", "No pet profiles yet", "Add your first furry client to get started.", "new-pet", "Add a pet"))}
+  ${canDelete() ? deletedPetsBinSection() : ""}`;
 }
 
 function petCard(p) {
@@ -1174,6 +1176,63 @@ async function deleteBookingToBin(id) {
     await DB.put("calendarTombstones", tomb); upsertLocal("calendarTombstones", tomb); reconcileCalendar();
   }
   if (deleted) logActivity("booking", "deleted", `${deleted.petName}${deleted.breed ? ` (${deleted.breed})` : ""} with ${groomerName(deleted.groomerId)}`);
+}
+
+// Soft-deletes a pet profile to the Pets-page Bin. Keeps the pet's ORIGINAL id in the backup,
+// so restoring it re-inserts the same id and every booking that references petId reconnects
+// automatically — the whole reason a plain "re-add the pet" by hand wouldn't do. The pet's
+// bookings are left untouched here (they carry the pet's name/breed inline, so they still read
+// fine meanwhile). Returns true on success, false if it aborted.
+//
+// Unlike deleteBookingToBin (best-effort backup, always deletes), this ABORTS the delete if the
+// backup can't be written — the whole point of this feature is recoverability, and a silent
+// backup failure (e.g. the deletedPets security rule isn't published yet) would otherwise hard-
+// delete the pet with no way back, the exact loss it's meant to prevent.
+async function deletePetToBin(id) {
+  const deleted = state.pets.find((p) => p.id === id);
+  if (!deleted) return true; // already gone — nothing to do
+  const trashed = { ...deleted, deletedAt: Date.now(), deletedBy: currentAdminName() };
+  try {
+    await DB.put("deletedPets", trashed); upsertLocal("deletedPets", trashed);
+  } catch (err) {
+    console.error("Couldn't back up pet to Bin — not deleting, to avoid losing it", err);
+    return false;
+  }
+  await DB.del("pets", id); removeLocal("pets", id);
+  logActivity("pet", "deleted", `${deleted.name}${deleted.breed ? ` (${deleted.breed})` : ""}`);
+  return true;
+}
+
+// One row in the Pets-page Bin: a deleted pet with Restore / delete-forever. Thumbnail is
+// inline-styled rather than reusing a card class so the row stays compact and self-contained.
+function deletedPetRow(p) {
+  const thumb = p.photo
+    ? `<div style="width:38px; height:38px; border-radius:9px; background:center/cover url('${p.photo}'); flex:none"></div>`
+    : `<div style="width:38px; height:38px; border-radius:9px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; flex:none">${SPECIES[p.species] || "🐾"}</div>`;
+  return `
+  <div class="row spread" style="gap:10px; padding:10px 0; border-bottom:1px solid var(--line)">
+    <div class="row" style="gap:10px; min-width:0; align-items:center">
+      ${thumb}
+      <div style="min-width:0">
+        <div style="font-weight:600">${esc(p.name)}${p.breed ? ` <span class="muted" style="font-weight:500">· ${esc(p.breed)}</span>` : ""}</div>
+        <div class="faint" style="font-size:12px">Deleted ${timeAgo(p.deletedAt)}${p.deletedBy ? ` by ${esc(p.deletedBy)}` : ""}</div>
+      </div>
+    </div>
+    <div class="row" style="gap:6px; flex:none">
+      <button class="btn sm" data-action="restore-pet" data-id="${p.id}">↩ Restore</button>
+      <button class="icon-btn" data-action="purge-pet" data-id="${p.id}" title="Delete permanently">🗑</button>
+    </div>
+  </div>`;
+}
+
+// The Bin block appended to the Pets page (Owner/Admin only — same role gate as deleting).
+function deletedPetsBinSection() {
+  const bin = [...state.deletedPets].sort((a, b) => (b.deletedAt || 0) - (a.deletedAt || 0));
+  return `
+  <details class="card bookings-collapsible" id="pets-bin" style="margin-top:16px" ${state.petsBinOpen ? "open" : ""}>
+    <summary>🗑 Bin (${bin.length})</summary>
+    ${bin.length ? bin.map(deletedPetRow).join("") : emptyInline("Nothing in the bin.")}
+  </details>`;
 }
 
 // Asked when deleting a recurring booking: remove just the clicked occurrence (an entry in
@@ -3064,6 +3123,9 @@ function bindView() {
   // (completing/editing/cancelling a booking re-renders the whole page, which would otherwise
   // reset every <details> to closed and lose the staff member's place mid-review).
   $$("[data-open-key]").forEach((el) => el.ontoggle = () => { state.bookingsOpen[el.dataset.openKey] = el.open; });
+  // Same idea for the Pets-page Bin — keep it open/closed across the re-render a restore/purge triggers.
+  const petsBin = $("#pets-bin");
+  if (petsBin) petsBin.ontoggle = () => { state.petsBinOpen = petsBin.open; };
 
   // Click an empty spot on the Schedule grid (Day/Week) to open "New booking" prefilled with
   // that date/time and groomer column, if any. Snaps to the start of whichever hour row was
@@ -3134,8 +3196,12 @@ async function handleAction(action, data) {
     case "new-pet": petEditorModal(null); break;
     case "edit-pet": petEditorModal(state.pets.find((p) => p.id === data.id)); break;
     case "del-pet":
-      if (confirm("Delete this pet profile? This cannot be undone.")) {
-        await DB.del("pets", data.id); removeLocal("pets", data.id); closeModal(); toast("Pet deleted"); go("pets");
+      if (confirm("Delete this pet profile? It'll move to the Bin on the Pets page, where it can be restored later.")) {
+        const ok = await deletePetToBin(data.id);
+        if (!ok) { toast("Couldn't delete — the Bin isn't set up yet (publish the deletedPets rule). Nothing was deleted."); break; }
+        closeModal(); toast("Pet moved to Bin");
+        state.petsBinOpen = true; // so the just-deleted pet is visible in the Bin without re-expanding
+        go("pets");
       } break;
     case "add-history": historyModal(state.pets.find((p) => p.id === data.id)); break;
     case "del-history": {
@@ -3179,6 +3245,27 @@ async function handleAction(action, data) {
         await DB.del("deletedBookings", data.id); removeLocal("deletedBookings", data.id);
         toast("Booking permanently deleted"); render();
         if (purged) logActivity("booking", "purged", `${purged.petName}${purged.breed ? ` (${purged.breed})` : ""}`);
+      }
+      break;
+    case "restore-pet": {
+      const rec = state.deletedPets.find((p) => p.id === data.id);
+      if (rec) {
+        // Restore with the SAME id it had, so every booking still pointing at that petId
+        // reconnects and the pet's Service History (built from completed bookings) fills back in.
+        const { deletedAt, deletedBy, ...rest } = rec;
+        await DB.put("pets", rest); upsertLocal("pets", rest);
+        await DB.del("deletedPets", data.id); removeLocal("deletedPets", data.id);
+        toast("Pet restored"); render();
+        logActivity("pet", "restored", `${rest.name}${rest.breed ? ` (${rest.breed})` : ""}`);
+      }
+      break;
+    }
+    case "purge-pet":
+      if (confirm("Permanently delete this pet profile? This cannot be undone.")) {
+        const purged = state.deletedPets.find((p) => p.id === data.id);
+        await DB.del("deletedPets", data.id); removeLocal("deletedPets", data.id);
+        toast("Pet permanently deleted"); render();
+        if (purged) logActivity("pet", "purged", `${purged.name}${purged.breed ? ` (${purged.breed})` : ""}`);
       }
       break;
     case "complete-booking": {
@@ -3346,7 +3433,7 @@ document.addEventListener("click", (e) => {
 /* ===================================================================
    AUTH GATE + BOOT
 =================================================================== */
-const COLLECTIONS = ["pets", "groomers", "bookings", "admins", "settings", "activity", "calendarTombstones", "deletedBookings", "leaves"];
+const COLLECTIONS = ["pets", "groomers", "bookings", "admins", "settings", "activity", "calendarTombstones", "deletedBookings", "deletedPets", "leaves"];
 let watchers = [];
 
 function startWatchers() {
