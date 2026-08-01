@@ -764,7 +764,7 @@ function viewHome() {
     <div class="card pad">
       <h3 class="section-title" style="margin:0 0 10px">Upcoming bookings</h3>
       ${upcoming.length
-        ? `<div class="home-bookings-list">${homeUpcomingList(upcoming)}</div>`
+        ? `<div class="home-bookings-list">${homeUpcomingList(upcoming, null, { confirmOnEdit: true })}</div>`
         : emptyInline("No upcoming bookings yet.")}
     </div>
 
@@ -1129,7 +1129,7 @@ function homeBookingRow(b, opts = {}, when) {
   const sub = [b.breed, (b.services || []).map(serviceLabel).join(", "), costLabel].filter(Boolean).join(" · ");
   const thumb = (pet && pet.photo) ? `<img class="hb-thumb" src="${pet.photo}" alt="">` : "";
   return `
-  <div class="home-booking" style="background:${groomerColor(b.groomerId)}" data-action="edit-booking" data-id="${b.id}" data-occ="${dateKey(when)}">
+  <div class="home-booking" style="background:${groomerColor(b.groomerId)}" data-action="edit-booking" data-id="${b.id}" data-occ="${dateKey(when)}"${opts.confirmOnEdit ? ` data-confirm="1"` : ""}>
     <div class="hb-text">
       <div class="hb-top"><span class="hb-time">${timeRange}</span><span class="hb-name">${esc(b.petName)}</span></div>
       ${sub ? `<div class="hb-sub">${esc(sub)}</div>` : ""}
@@ -2134,7 +2134,7 @@ function historyModal(pet) {
 // slotPrefill (only used for a brand-new booking, never when editing): { start: Date,
 // groomerId: string|null } — set when opened by clicking an empty spot on the Schedule
 // grid, so the date/time/groomer are already filled in instead of defaulting to "now".
-function bookingModal(booking, prefillPet, slotPrefill, occurrenceKey) {
+function bookingModal(booking, prefillPet, slotPrefill, occurrenceKey, confirmOnEdit) {
   const b = booking || {};
   const now = new Date(Date.now() + 60 * 60 * 1000); now.setMinutes(0, 0, 0);
   const startVal = b.start ? toLocalInput(b.start) : toLocalInput((slotPrefill && slotPrefill.start) || now);
@@ -2587,8 +2587,13 @@ function bookingModal(booking, prefillPet, slotPrefill, occurrenceKey) {
     rememberBreed(rec.breed);
     logActivity("booking", booking ? "updated" : "created",
       `${rec.petName}${rec.breed ? ` (${rec.breed})` : ""} with ${groomerName(rec.groomerId)} — ${fmtDate(rec.start)} ${fmtTime(rec.start)}`);
-    // New booking → swap the form for a copy-the-confirmation popup; editing just closes.
-    if (booking) { closeModal(); toast(splitOne ? "This booking updated — rest of the series unchanged" : "Booking updated"); }
+    // New booking → swap the form for a copy-the-confirmation popup. An edit made from Home's
+    // Upcoming list does the same (confirmOnEdit) so staff can send the customer the updated
+    // details; edits from elsewhere (Schedule, Bookings page) just close as before.
+    if (booking) {
+      toast(splitOne ? "This booking updated — rest of the series unchanged" : "Booking updated");
+      if (confirmOnEdit) confirmCopyModal(rec); else closeModal();
+    }
     else { toast("Booking created"); confirmCopyModal(rec); }
   };
 }
@@ -3123,7 +3128,7 @@ async function handleAction(action, data) {
     } break;
     case "new-booking": bookingModal(null); break;
     case "book-pet": bookingModal(null, state.pets.find((p) => p.id === data.id)); break;
-    case "edit-booking": bookingModal(state.bookings.find((b) => b.id === data.id), null, null, data.occ || null); break;
+    case "edit-booking": bookingModal(state.bookings.find((b) => b.id === data.id), null, null, data.occ || null, data.confirm === "1"); break;
     case "copy-confirm": {
       const b = state.bookings.find((x) => x.id === data.id);
       if (!b) break;
