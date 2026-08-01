@@ -697,6 +697,20 @@ let lastRenderedPage = null;
 // handy for a long, scrolled-down pet list where they're editing one pet after another.
 let petsScrollY = 0;
 let restorePetsScroll = false;
+// Coalesces the render() storm Firestore fires on boot. All ~9 collection listeners deliver
+// their first snapshot within a frame or two of each other, and each one used to trigger a
+// full #view rebuild — which re-decodes every inline base64 pet thumbnail from scratch. Doing
+// that ~9× back-to-back is the main reason Home load feels fine on an iPhone 13 (~3-4s) but
+// crawls on an iPhone 11 (~20s): the older chip is far slower at decoding those data-URL
+// images, and the redundant renders multiply that cost. scheduleRender() collapses any burst
+// into a single render on the next animation frame. Direct render() calls (after a local
+// write, on nav) stay synchronous so a tap still updates the UI instantly.
+let renderQueued = false;
+function scheduleRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => { renderQueued = false; render(); });
+}
 function render() {
   // Self-heals if a role's access changed while this session was sitting on a page it can
   // no longer see (e.g. the App Owner just unchecked a section for their role, live).
@@ -1127,7 +1141,10 @@ function homeBookingRow(b, opts = {}, when) {
   }
   // Top row: time then pet name. Bottom row: breed · service · price (price omitted if hidden).
   const sub = [b.breed, (b.services || []).map(serviceLabel).join(", "), costLabel].filter(Boolean).join(" · ");
-  const thumb = (pet && pet.photo) ? `<img class="hb-thumb" src="${pet.photo}" alt="">` : "";
+  // loading="lazy" + decoding="async": a long upcoming list (recurring bookings expand to one
+  // row per occurrence over the 90-day horizon, each repeating its pet's photo) would otherwise
+  // decode every off-screen data-URL thumbnail during first paint — brutal on an older phone.
+  const thumb = (pet && pet.photo) ? `<img class="hb-thumb" src="${pet.photo}" alt="" loading="lazy" decoding="async">` : "";
   return `
   <div class="home-booking" style="background:${groomerColor(b.groomerId)}" data-action="edit-booking" data-id="${b.id}" data-occ="${dateKey(when)}"${opts.confirmOnEdit ? ` data-confirm="1"` : ""}>
     <div class="hb-text">
@@ -3336,7 +3353,7 @@ function startWatchers() {
   watchers = COLLECTIONS.map((name) =>
     DB.watch(name, async (changed) => {
       state[changed] = await DB.getAll(changed);
-      render();
+      scheduleRender(); // coalesce the boot snapshot burst into one render — see scheduleRender()
       // Someone else's change (or this device's own) may need syncing to Calendar —
       // reconcileCalendar() no-ops instantly if this device isn't connected.
       if (changed === "bookings" || changed === "calendarTombstones") reconcileCalendar();
