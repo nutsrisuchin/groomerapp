@@ -1143,6 +1143,10 @@ function homeBookingRow(b, opts = {}, when) {
   }
   // Top row: time then pet name. Bottom row: breed · service · price (price omitted if hidden).
   const sub = [b.breed, (b.services || []).map(serviceLabel).join(", "), costLabel].filter(Boolean).join(" · ");
+  // Notes are an internal "things the groomer should know" remark, so skip them on the
+  // customer-facing pet-detail list (hidePrice) — same reason the on-leave chip is skipped
+  // there. Kept to one line with an ellipsis; the full note shows when the booking is opened.
+  const noteText = (!opts.hidePrice && b.notes && b.notes.trim()) ? b.notes.trim() : "";
   // loading="lazy" + decoding="async": a long upcoming list (recurring bookings expand to one
   // row per occurrence over the 90-day horizon, each repeating its pet's photo) would otherwise
   // decode every off-screen data-URL thumbnail during first paint — brutal on an older phone.
@@ -1152,6 +1156,7 @@ function homeBookingRow(b, opts = {}, when) {
     <div class="hb-text">
       <div class="hb-top"><span class="hb-time">${timeRange}</span><span class="hb-name">${esc(b.petName)}</span></div>
       ${sub ? `<div class="hb-sub">${esc(sub)}</div>` : ""}
+      ${noteText ? `<div class="hb-note">📝 ${esc(noteText)}</div>` : ""}
     </div>
     ${thumb}
   </div>`;
