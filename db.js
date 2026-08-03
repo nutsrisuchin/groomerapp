@@ -60,10 +60,22 @@
   api.put = (name, val) => col(name).doc(val.id).set(val).then(() => val);
   api.del = (name, id) => col(name).doc(id).delete();
 
+  // Collections we only ever need the most-recent slice of, kept live. The activity/notifications
+  // log grows one doc per action forever, yet the UI only shows the newest handful — subscribing
+  // to the whole collection meant re-reading the ENTIRE history on every app open, which was the
+  // dominant Firestore read cost (reads climbed as the log grew). Cap the live listener to the
+  // newest N by timestamp instead; older rows stay in the database, they're just not downloaded.
+  // Keep N comfortably above what any view actually shows (Home shows 8). No composite index is
+  // needed — ordering on a single field (`at`) is auto-indexed.
+  const WATCH_LIMITS = { activity: 50 };
+
   // Subscribes to a collection; cb(name) fires on every change (including this device's own writes).
   // Returns an unsubscribe function.
   api.watch = function (name, cb) {
-    return col(name).onSnapshot(
+    let ref = col(name);
+    const limit = WATCH_LIMITS[name];
+    if (limit) ref = ref.orderBy("at", "desc").limit(limit);
+    return ref.onSnapshot(
       (snap) => { cache[name] = snap.docs.map((d) => d.data()); cb(name); },
       (err) => console.error("Firestore listen failed for", name, err)
     );

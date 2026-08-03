@@ -27,6 +27,15 @@ Deployed on GitHub Pages, auto-deploys on push to `master`.
 - Each Firestore collection gets a live `onSnapshot` listener (wrapped as `DB.watch(name, cb)`
   in `db.js`) that replaces the relevant array in `state` and calls `render()`. This means
   every connected device sees every other device's changes without polling.
+- **Watch out for unbounded collections read in full.** Because each listener re-reads its
+  *entire* collection on every app open (no offline persistence enabled), a collection that
+  grows forever makes every open progressively more expensive — this is what blew past
+  Firestore's 50k-reads/day free limit, driven mostly by the ever-growing `activity` log even
+  though the UI only shows the newest 8. `DB.watch` therefore caps such collections to the
+  newest N via `WATCH_LIMITS` in `db.js` (`activity: 50`, ordered by `at desc`); older rows
+  stay in the DB but aren't downloaded. Add any future append-only/log-style collection to
+  `WATCH_LIMITS` rather than subscribing to the whole thing. (The deeper, not-yet-done lever is
+  enabling IndexedDB persistence so reopens sync deltas instead of re-reading everything.)
 - Writes are optimistic: `upsertLocal(collection, record)` / `removeLocal(collection, id)`
   update `state` immediately so the UI reflects a change before Firestore's own snapshot
   round-trip confirms it — the confirming snapshot then just no-ops over the same data.
