@@ -789,6 +789,7 @@ function viewHome() {
         <div class="stack" style="gap:2px">
           ${recent.length ? recent.map(activityRow).join("") : emptyInline("No recent activity yet.")}
         </div>
+        ${state.activity.length > 8 ? `<button class="link" data-action="activity-history" style="margin-top:10px">View all history →</button>` : ""}
       </div>
       <div class="card pad">
         <h3 class="section-title">Quick actions</h3>
@@ -1019,6 +1020,48 @@ function activityRow(a) {
       <div class="faint" style="font-size:12px">${esc(a.actorName || "Someone")} · ${timeAgo(a.at)}</div>
     </div>
   </div>`;
+}
+
+// Full activity history with a "Load more" button. Deliberately NOT a live listener: it seeds
+// from the newest ~50 already in memory (free — those are what the Home feed's listener holds),
+// then each "Load more" does a one-time paginated DB.getPage() for the next older batch. So
+// older history is billed only when someone actually opens this and scrolls back — it never
+// re-reads on every app open, which is the whole point of capping the live activity listener.
+function activityHistoryModal() {
+  const BATCH = 50;
+  let items = [...state.activity].sort((a, b) => b.at - a.at);
+  let done = false; // true once a fetched page came back short — nothing older left
+  function paint() {
+    openModal(`
+      <h2>Activity history</h2>
+      <div class="muted" style="margin-bottom:12px">Most recent first.</div>
+      <div class="stack" style="gap:2px; max-height:60vh; overflow:auto">
+        ${items.length ? items.map(activityRow).join("") : emptyInline("No activity yet.")}
+      </div>
+      <div class="row" style="justify-content:center; margin-top:14px">
+        ${done
+          ? `<span class="faint" style="font-size:12px">— That's the whole history —</span>`
+          : `<button class="btn" id="act-more">Load more</button>`}
+        <button class="btn" data-close-modal style="margin-left:8px">Close</button>
+      </div>`);
+    const moreBtn = $("#act-more");
+    if (moreBtn) moreBtn.onclick = async () => {
+      moreBtn.disabled = true; moreBtn.textContent = "Loading…";
+      try {
+        const oldestAt = items.length ? items[items.length - 1].at : null;
+        const page = await DB.getPage("activity", { afterAt: oldestAt, limit: BATCH });
+        if (page.length < BATCH) done = true;
+        const seen = new Set(items.map((x) => x.id)); // guard the page boundary against dupes
+        items = items.concat(page.filter((x) => !seen.has(x.id)));
+        paint();
+      } catch (err) {
+        console.error("Load more activity failed", err);
+        moreBtn.disabled = false; moreBtn.textContent = "Load more";
+        toast("Couldn't load older activity — try again.");
+      }
+    };
+  }
+  paint();
 }
 
 function bookingRow(b, opts = {}) {
@@ -3394,6 +3437,7 @@ async function handleAction(action, data) {
       render();
     } break;
     case "set-upcoming-range": state.upcomingRange = data.value; render(); break;
+    case "activity-history": activityHistoryModal(); break;
     case "clear-search": state.search = { name: "", breed: "" }; render(); break;
     case "clear-pets-search": state.petsQuery = ""; render(); break;
     case "go-pets": go("pets"); break;
@@ -3514,6 +3558,10 @@ DB.onAuthChange(async (user) => {
     $("#login-gate").hidden = true;
     $("#app-shell").hidden = false;
     gcalBannerDismissed = false;
+    // Reuse a still-valid Calendar connection saved from a previous session, so reopening the
+    // app doesn't need a re-tap. If it succeeds, GCal.onStatusChange fires and flushes any
+    // bookings that piled up unsynced; if the saved token has expired, the Connect banner shows.
+    GCal.resume();
     render();
     migratePetTimesToHours();
     migrateShowerLabelToBasic();

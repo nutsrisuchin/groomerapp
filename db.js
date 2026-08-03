@@ -54,6 +54,18 @@
     return (prefix || "id") + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   };
 
+  // One-time paginated read of a collection ordered by `at` (newest first) — used by the
+  // "Activity history" load-more list. This is a plain .get(), NOT a live listener, so it bills
+  // once per call (the batch size) and never re-reads on its own. `afterAt` is the `at` value to
+  // start after (pass the oldest `at` already loaded); omit for the first page. Single-field
+  // order → auto-indexed, no composite index needed.
+  api.getPage = async function (name, { afterAt = null, limit = 50 } = {}) {
+    let q = col(name).orderBy("at", "desc");
+    if (afterAt != null) q = q.startAfter(afterAt);
+    const snap = await q.limit(limit).get();
+    return snap.docs.map((d) => d.data());
+  };
+
   // Reads come from the live local cache kept in sync by onSnapshot (see api.watch).
   api.getAll = (name) => Promise.resolve(cache[name] || []);
   api.get = (name, id) => Promise.resolve((cache[name] || []).find((x) => x.id === id));
