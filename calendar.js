@@ -22,6 +22,20 @@
   let pending = null; // { resolve, reject } for an in-flight explicit connect()
   let statusListener = null;
 
+  // Persist the current access token so a still-valid connection survives an app reopen — the
+  // token itself is a bearer credential valid until its expiry no matter where it's kept, so
+  // reusing it needs no popup and works even on iOS Safari (unlike silently fetching a *new*
+  // one, which Safari's tracking protection blocks). It only holds the short-lived
+  // calendar.events token (≤1h), never a long-term/refresh credential — an acceptable tradeoff
+  // for an internal shop app. Once it expires we fall back to the Connect button.
+  const STORAGE_KEY = "gcal_token_v1";
+  function storeToken() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ accessToken, tokenExpiry })); } catch (_) {}
+  }
+  function clearStoredToken() {
+    try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
+  }
+
   function whenGisReady() {
     return new Promise((resolve) => {
       if (window.google && google.accounts && google.accounts.oauth2) { resolve(); return; }
@@ -40,6 +54,7 @@
   function handleTokenResponse(resp) {
     if (resp.error) {
       accessToken = null; tokenExpiry = 0;
+      clearStoredToken(); // a failed (re)auth means the saved token, if any, is no good — drop it
       if (pending) { pending.reject(new Error(resp.error)); pending = null; }
       if (statusListener) statusListener(false);
       return;
@@ -47,6 +62,7 @@
     accessToken = resp.access_token;
     const expiresIn = Number(resp.expires_in) || 3500;
     tokenExpiry = Date.now() + expiresIn * 1000;
+    storeToken(); // so an app reopen within this hour stays connected without a re-tap
     scheduleSilentRefresh(expiresIn);
     if (pending) { pending.resolve(); pending = null; }
     if (statusListener) statusListener(true);
@@ -65,7 +81,28 @@
   const api = {};
 
   api.isConnected = () => !!accessToken && Date.now() < tokenExpiry;
-  api.disconnect = () => { accessToken = null; tokenExpiry = 0; clearTimeout(refreshTimer); };
+  api.disconnect = () => { accessToken = null; tokenExpiry = 0; clearTimeout(refreshTimer); clearStoredToken(); };
+
+  // Reuse a saved, still-valid token from a previous app session so reopening the app doesn't
+  // require tapping Connect again. Returns true if a usable token was restored. Called on boot.
+  // A 60s margin avoids adopting a token that's about to expire mid-request. This never opens a
+  // popup or fetches a new token — if nothing valid is stored, it just reports "not connected"
+  // and the normal Connect flow takes over.
+  api.resume = function () {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+      if (saved && saved.accessToken && saved.tokenExpiry - Date.now() > 60000) {
+        accessToken = saved.accessToken;
+        tokenExpiry = saved.tokenExpiry;
+        scheduleSilentRefresh((tokenExpiry - Date.now()) / 1000);
+        ensureTokenClient(); // ready the client so the scheduled silent refresh has one to call
+        if (statusListener) statusListener(true);
+        return true;
+      }
+    } catch (_) { /* malformed storage — fall through and clear it */ }
+    clearStoredToken();
+    return false;
+  };
   // Notified on every silent renewal success/failure too, so the UI can react without a click.
   api.onStatusChange = (fn) => { statusListener = fn; };
 
@@ -91,6 +128,7 @@
     });
     if (res.status === 401) {
       accessToken = null;
+      clearStoredToken(); // the token Google just rejected must not be reused on the next reopen
       if (!retried) { try { return await call(method, calendarId, path, body, true); } catch (err) { /* fall through */ } }
       throw new Error("token-expired");
     }
