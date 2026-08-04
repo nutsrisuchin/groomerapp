@@ -66,6 +66,16 @@
     return snap.docs.map((d) => d.data());
   };
 
+  // One-time full fetch of a collection (a plain .get(), not a live listener) — used for
+  // collections we no longer keep live-subscribed because they're only needed on one screen
+  // (e.g. the Bins). Reads once when that screen is opened instead of on every app open.
+  // Updates the local cache so getAll()/get() see it afterward.
+  api.fetchAll = async function (name) {
+    const snap = await col(name).get();
+    cache[name] = snap.docs.map((d) => d.data());
+    return cache[name];
+  };
+
   // Reads come from the live local cache kept in sync by onSnapshot (see api.watch).
   api.getAll = (name) => Promise.resolve(cache[name] || []);
   api.get = (name, id) => Promise.resolve((cache[name] || []).find((x) => x.id === id));

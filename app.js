@@ -745,7 +745,25 @@ function go(view, petId = null) {
   if (!canAccessView(view)) { toast("You don't have access to that section"); return; }
   // Opening a pet from the list: stash where the list was scrolled so returning restores it.
   if (state.view === "pets" && view === "pet") { petsScrollY = window.scrollY; restorePetsScroll = true; }
-  state.view = view; state.petId = petId; render();
+  state.view = view; state.petId = petId;
+  loadBinFor(view);
+  render();
+}
+
+// The Bins aren't live-subscribed (see COLLECTIONS) — fetch one, once per session, the first
+// time its page is opened, then re-render so the Bin section fills in. Only for users who can
+// see a Bin at all (canDelete), and only once (binLoaded flags) so repeat visits cost nothing.
+// A restore/purge later mutates the already-loaded state array in place, so no refetch needed.
+const binLoaded = { bookings: false, pets: false };
+function loadBinFor(view) {
+  if (!canDelete()) return;
+  if (view === "bookings" && !binLoaded.bookings) {
+    binLoaded.bookings = true;
+    DB.fetchAll("deletedBookings").then((r) => { state.deletedBookings = r; render(); }).catch((err) => { console.error("Couldn't load Bin", err); });
+  } else if (view === "pets" && !binLoaded.pets) {
+    binLoaded.pets = true;
+    DB.fetchAll("deletedPets").then((r) => { state.deletedPets = r; render(); }).catch((err) => { console.error("Couldn't load Pets Bin", err); });
+  }
 }
 
 /* ---------- HOME ---------- */
@@ -3482,10 +3500,21 @@ document.addEventListener("click", (e) => {
 /* ===================================================================
    AUTH GATE + BOOT
 =================================================================== */
-const COLLECTIONS = ["pets", "groomers", "bookings", "admins", "settings", "activity", "calendarTombstones", "deletedBookings", "deletedPets", "leaves"];
+// Live-subscribed collections (re-read in full on every app open). The two Bins
+// (deletedBookings/deletedPets) are deliberately NOT here — they're only ever shown on the
+// Bookings/Pets pages and grow over time, so keeping them live meant paying to re-read every
+// deleted record on every open. They're fetched once, on demand, when those pages open — see
+// loadBinFor() / go(). calendarTombstones stays live because reconcileCalendar() needs it in
+// the background; `leaves` stays live because Home/Schedule show on-leave info.
+const COLLECTIONS = ["pets", "groomers", "bookings", "admins", "settings", "activity", "calendarTombstones", "leaves"];
 let watchers = [];
 
 function startWatchers() {
+  // Tear down any existing listeners first. Without this, if onAuthChange ever fired more than
+  // once with a user in a session, each call stacked a second full set of onSnapshot listeners
+  // on top of the old ones — every duplicate set independently re-reads all collections and
+  // gets billed for every change, silently multiplying Firestore reads. Idempotent now.
+  stopWatchers();
   watchers = COLLECTIONS.map((name) =>
     DB.watch(name, async (changed) => {
       state[changed] = await DB.getAll(changed);
