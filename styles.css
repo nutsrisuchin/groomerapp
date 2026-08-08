@@ -212,6 +212,11 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 
 /* ---------- Chips / badges ---------- */
 .chip{display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:600; background:var(--surface-2); color:var(--ink-soft)}
+/* Day-picker checkboxes (groomer "Works on", Business-hours "Closed on") live inside a .field,
+   whose `.field input{width:100%;padding:…}` rule (equal specificity, defined later) would
+   otherwise stretch each checkbox into a full-width pill covering its day label. This more
+   specific rule restores the small square box. */
+.chip input[type="checkbox"]{width:16px; height:16px; min-width:16px; padding:0; border-radius:4px}
 /* Booking form's per-service checkbox + hours row. A dedicated, isolated class (not
    reusing .chip) so nothing shared elsewhere can affect it. The whole row is one <label>,
    so tapping the service name also toggles the checkbox — a bigger, easier touch target. */
