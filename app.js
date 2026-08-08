@@ -1610,7 +1610,52 @@ function nowMinutesToday() { const n = new Date(); return { dateStr: dateKey(n),
 function viewSchedule() {
   if (!state.scheduleDate) state.scheduleDate = todayKey();
   if (!state.scheduleMode) state.scheduleMode = "week";
+  if (!state.scheduleView) state.scheduleView = "assistant"; // Assistant is the default view
+  if (!state.assistantRange) state.assistantRange = "week";
   const mode = state.scheduleMode, dateStr = state.scheduleDate;
+
+  // Groomer visibility filters + Edit hours — shared by both the Assistant and the classic grid.
+  const filters = `
+  <div class="sched-filter-row">
+    <div class="sched-groomer-chips">
+      ${state.groomers.map((g) => `
+        <label class="sched-chip">
+          <input type="checkbox" class="sched-groomer-toggle" data-id="${g.id}" ${state.scheduleHiddenGroomers.includes(g.id) ? "" : "checked"}>
+          <span class="dot" style="background:${g.color}"></span> ${esc(g.name)}
+        </label>`).join("") || emptyInline("No groomers yet.")}
+    </div>
+    <button class="btn sm" data-action="edit-hours">Edit hours</button>
+  </div>`;
+
+  // Top-level toggle: the availability Assistant (default) vs the classic time-grid. Distinct
+  // class names (not the nav's) so a later responsive tweak on one can't silently break the other.
+  const viewTabs = `
+  <div class="sched-viewtabs">
+    <button class="sched-viewtab ${state.scheduleView === "assistant" ? "active" : ""}" data-action="sched-view-assistant">✨ Assistant</button>
+    <button class="sched-viewtab ${state.scheduleView === "grid" ? "active" : ""}" data-action="sched-view-grid">🗓 Schedule grid</button>
+  </div>`;
+
+  if (state.scheduleView === "assistant") {
+    const rangeCard = `
+    <div class="card pad">
+      <div class="row" style="gap:10px; align-items:center; flex-wrap:wrap">
+        <strong style="font-size:14px">✨ Open slots for the next</strong>
+        <select id="assistant-range-select" class="sched-mode-select" data-action="assistant-range">
+          <option value="week" ${state.assistantRange === "week" ? "selected" : ""}>7 days</option>
+          <option value="2weeks" ${state.assistantRange === "2weeks" ? "selected" : ""}>14 days</option>
+          <option value="month" ${state.assistantRange === "month" ? "selected" : ""}>30 days</option>
+        </select>
+      </div>
+      <div class="help" style="margin-top:6px">Each row is a free time range for a groomer, taking their working days and leave into account. Tap one to start a booking in that slot.</div>
+    </div>`;
+    return `
+    <div class="page-head"><h1>Schedule</h1></div>
+    ${viewTabs}
+    ${rangeCard}
+    ${filters}
+    ${scheduleAssistantBody()}`;
+  }
+
   const title = mode === "day" ? fmtDateKey(dateStr) : mode === "week" ? fmtWeekRange(dateStr) : fmtMonthKey(dateStr);
 
   // Mini-calendar for quick date-jumping. Only rendered in Day view (which has spare
@@ -1637,20 +1682,6 @@ function viewSchedule() {
     </div>
   </div>`;
 
-  // Groomer visibility filters + Edit hours, moved out of the old left sidebar into a full-
-  // width row above the grid so the grid itself can span the whole page.
-  const filters = `
-  <div class="sched-filter-row">
-    <div class="sched-groomer-chips">
-      ${state.groomers.map((g) => `
-        <label class="sched-chip">
-          <input type="checkbox" class="sched-groomer-toggle" data-id="${g.id}" ${state.scheduleHiddenGroomers.includes(g.id) ? "" : "checked"}>
-          <span class="dot" style="background:${g.color}"></span> ${esc(g.name)}
-        </label>`).join("") || emptyInline("No groomers yet.")}
-    </div>
-    <button class="btn sm" data-action="edit-hours">Edit hours</button>
-  </div>`;
-
   // No mode has a persistent mini-calendar anymore — every view gets the grid's full page
   // width, and the title itself is a click target that pops the same mini-calendar open
   // right under the toolbar, letting staff jump to any day/week/month by picking a date in
@@ -1675,9 +1706,82 @@ function viewSchedule() {
 
   return `
   <div class="page-head"><h1>Schedule</h1></div>
+  ${viewTabs}
   ${toolbar}
   ${filters}
   ${body}`;
+}
+
+// ---- Schedule Assistant: per-groomer open time slots, grouped by day (Home-list styling) ----
+// Reuses freeSlots() over each groomer's own bookings within business hours, and skips days the
+// shop is closed, the groomer's off days (workDays) and their leave — so every row shown is a
+// slot the groomer can actually take. Ranges shorter than this are too small for a real
+// appointment and would just add noise, so they're dropped.
+const ASSISTANT_MIN_SLOT_MIN = 30;
+function assistantRangeDays() {
+  return state.assistantRange === "month" ? 30 : state.assistantRange === "2weeks" ? 14 : 7;
+}
+function fmtDurationMin(mins) {
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return m ? (h ? `${h}h ${m}m` : `${m}m`) : `${h}h`;
+}
+// One open-slot row: groomer-colored, Home-booking styling, tappable to start a booking prefilled
+// with that groomer, date and start time (via the "assistant-book" action).
+function assistantSlotRow(groomer, dateStr, startMin, endMin) {
+  const timeRange = `${fmtMinutes(startMin)}–${fmtMinutes(endMin)}`;
+  return `
+  <div class="home-booking" style="background:${groomer.color}" data-action="assistant-book" data-groomer-id="${groomer.id}" data-date="${dateStr}" data-min="${startMin}">
+    <div class="hb-text">
+      <div class="hb-top"><span class="hb-time">${timeRange}</span><span class="hb-name">${esc(groomer.name)}</span></div>
+      <div class="hb-sub">${fmtDurationMin(endMin - startMin)} free</div>
+    </div>
+  </div>`;
+}
+function scheduleAssistantBody() {
+  const groomers = visibleGroomers();
+  if (!groomers.length) {
+    return state.groomers.length
+      ? emptyInline("All groomers are hidden — check one in the filter above to see their open slots.")
+      : emptyBlock("🧑‍🎨", "No groomers yet", "Add a groomer to see their open slots here.", "new-groomer", "Add groomer");
+  }
+  const hours = getBusinessHours();
+  const openMin = toMinutes(hours.open), closeMin = toMinutes(hours.close);
+  const order = scheduleGroomerOrder();
+  const startKey = todayKey();
+  const groups = [];
+  for (let i = 0; i < assistantRangeDays(); i++) {
+    const d = addDaysKey(startKey, i);
+    const dow = new Date(d + "T00:00:00").getDay();
+    if ((hours.closedDays || []).includes(dow)) continue; // shop closed that day
+    const all = bookingsOnDate(d);
+    const rows = [];
+    groomers.forEach((g) => {
+      if (groomerOffOnDate(g.id, d)) return;   // not a working day for this groomer
+      if (groomerLeaveOnDate(g.id, d)) return; // on leave
+      const busy = all.filter((it) => it.booking.groomerId === g.id);
+      freeSlots(busy, openMin, closeMin)
+        .filter((f) => f.endMin - f.startMin >= ASSISTANT_MIN_SLOT_MIN)
+        .forEach((f) => rows.push({ g, startMin: f.startMin, endMin: f.endMin }));
+    });
+    if (!rows.length) continue; // nobody free that day — skip it rather than show an empty header
+    rows.sort((a, b) => a.startMin - b.startMin || order.indexOf(a.g.id) - order.indexOf(b.g.id));
+    groups.push({ dateStr: d, rows });
+  }
+  if (!groups.length) return emptyInline("No open slots in this period.");
+  return `<div class="home-bookings-list">${groups.map((grp) => {
+    const when = new Date(grp.dateStr + "T00:00:00");
+    return `
+    <div class="home-day-group">
+      <div class="home-day-label">
+        <div class="hd-dow">${esc(when.toLocaleDateString(undefined, { weekday: "short" }))}</div>
+        <div class="hd-num">${when.getDate()}</div>
+        <div class="hd-mon">${esc(when.toLocaleDateString(undefined, { month: "short" }))}</div>
+      </div>
+      <div class="home-day-bookings">
+        ${grp.rows.map((r) => assistantSlotRow(r.g, grp.dateStr, r.startMin, r.endMin)).join("")}
+      </div>
+    </div>`;
+  }).join("")}</div>`;
 }
 
 function fmtMonthOnly(monthKey) { return new Date(monthKey + "-01T00:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }); }
@@ -3490,7 +3594,16 @@ async function handleAction(action, data) {
       render();
     } break;
     case "sched-today": state.scheduleDate = todayKey(); render(); break;
-    case "goto-day": state.scheduleDate = data.date; state.scheduleMode = "day"; render(); break;
+    case "sched-view-assistant": state.scheduleView = "assistant"; render(); break;
+    case "sched-view-grid": state.scheduleView = "grid"; render(); break;
+    case "assistant-range": state.assistantRange = data.value; render(); break;
+    case "assistant-book": {
+      const start = new Date(data.date + "T00:00:00");
+      const min = Number(data.min) || 0;
+      start.setHours(Math.floor(min / 60), min % 60, 0, 0);
+      bookingModal(null, null, { start, groomerId: data.groomerId || null });
+    } break;
+    case "goto-day": state.scheduleDate = data.date; state.scheduleMode = "day"; state.scheduleView = "grid"; render(); break;
     case "sched-jump": state.scheduleDate = data.date; state.scheduleMiniCalOpen = false; render(); break;
     case "toggle-mini-cal": state.scheduleMiniCalOpen = !state.scheduleMiniCalOpen; render(); break;
     case "mini-cal-prev": state.scheduleDate = addMonthsKey(state.scheduleDate || todayKey(), -1); render(); break;
