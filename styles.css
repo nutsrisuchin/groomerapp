@@ -324,13 +324,6 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 .fin-groomer-row strong{width:90px; flex:none; text-align:right}
 
 /* ---------- Schedule: Google-Calendar-style layout ---------- */
-/* Top-level Assistant vs grid toggle. Own class names (not the nav's) so a later responsive
-   rule on one can't silently affect the other — a mistake this project has hit before. */
-.sched-viewtabs{display:flex; gap:8px; margin-bottom:16px}
-.sched-viewtab{flex:1; min-height:44px; display:flex; align-items:center; justify-content:center; gap:6px;
-  border:1px solid var(--line); background:var(--surface); color:var(--ink-soft);
-  border-radius:12px; font-size:14px; font-weight:700; cursor:pointer}
-.sched-viewtab.active{background:var(--brand); color:#fff; border-color:var(--brand)}
 .gcal-toolbar{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:16px}
 .gcal-title{font-weight:700; font-size:16px; margin-left:6px}
 .sched-mode-select{width:auto; padding:8px 12px; font-weight:600}
