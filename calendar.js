@@ -146,7 +146,16 @@
     return res.status === 204 ? null : res.json();
   }
 
+  // Base RRULE per recurrence kind. "custom" is "every N weeks" — N lives in booking.recurrenceWeeks
+  // and becomes a WEEKLY INTERVAL, so it's computed per-booking in rruleFor() rather than stored here.
   const RRULE_BASE = { weekly: "FREQ=WEEKLY", biweekly: "FREQ=WEEKLY;INTERVAL=2", monthly: "FREQ=MONTHLY" };
+  function rruleFor(booking) {
+    if (booking.recurrence === "custom") {
+      const n = Math.max(1, Math.round(Number(booking.recurrenceWeeks) || 1));
+      return `FREQ=WEEKLY;INTERVAL=${n}`;
+    }
+    return RRULE_BASE[booking.recurrence] || null;
+  }
 
   // Display-only rename, mirrored from app.js's SERVICE_DISPLAY_LABELS — bookings still store
   // "Hair Styling" internally, this module just shouldn't reach into app.js to stay isolated.
@@ -167,8 +176,9 @@
       end: { dateTime: end, timeZone },
     };
     if (groomer && groomer.calendarColorId) event.colorId = groomer.calendarColorId;
-    if (booking.recurrence && booking.recurrence !== "none" && RRULE_BASE[booking.recurrence]) {
-      let rule = RRULE_BASE[booking.recurrence];
+    const baseRule = rruleFor(booking);
+    if (booking.recurrence && booking.recurrence !== "none" && baseRule) {
+      let rule = baseRule;
       if (booking.recurrenceUntil) rule += `;UNTIL=${booking.recurrenceUntil.replace(/-/g, "")}T235959Z`;
       event.recurrence = [`RRULE:${rule}`];
       // "Delete this occurrence" exceptions become EXDATE lines, each at the series' start

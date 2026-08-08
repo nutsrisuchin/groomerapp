@@ -256,7 +256,9 @@ Service History; restorable via the Pets page's "🗑 Bin" section, Owner/Admin 
 
 - **`bookings`**: `petId` (optional — a booking can reference a free-text `petName`/`breed`
   without a real pet record), `groomerId` (`null` = "No preference", rendered as its own
-  Schedule column), `start` (ISO string), `recurrence` (`none`/`weekly`/`biweekly`/`monthly`)
+  Schedule column), `start` (ISO string), `recurrence` (`none`/`weekly`/`biweekly`/`monthly`/`custom`;
+  `custom` = "every N weeks", with N in `recurrenceWeeks` — the week-based kinds share
+  `recurStepDays()`/`recurLabel()` helpers and map to a WEEKLY RRULE with `INTERVAL=N` on Calendar)
   + `recurrenceUntil` + `excludedDates` (array of `YYYY-MM-DD` "delete this occurrence"
   exceptions — honored by `occurrenceOnDate`/`nextOccurrence`/`upcomingOccurrences`, and
   emitted as Calendar EXDATE lines), `seriesId` (set only on a booking that was split out of a

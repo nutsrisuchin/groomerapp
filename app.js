@@ -34,7 +34,24 @@ const RECUR = {
   weekly:  { label: "Every week",     rrule: "FREQ=WEEKLY" },
   biweekly:{ label: "Every 2 weeks",  rrule: "FREQ=WEEKLY;INTERVAL=2" },
   monthly: { label: "Every month",    rrule: "FREQ=MONTHLY" },
+  custom:  { label: "Every N weeks…", rrule: null }, // interval in weeks lives in booking.recurrenceWeeks
 };
+// Number of weeks entered for a "custom" recurrence, clamped to a sane positive integer.
+function recurWeeks(b) { return Math.max(1, Math.round(Number(b.recurrenceWeeks) || 1)); }
+// Repeat interval in DAYS for the week-based recurrences (weekly/biweekly/custom "every N weeks").
+// Returns null for monthly (which steps by calendar month) and none — those are handled separately.
+function recurStepDays(b) {
+  const r = b.recurrence;
+  if (r === "weekly") return 7;
+  if (r === "biweekly") return 14;
+  if (r === "custom") return recurWeeks(b) * 7;
+  return null;
+}
+// Human label for a booking's recurrence, spelling out the interval for "custom" (e.g. "Every 5 weeks").
+function recurLabel(b) {
+  if (b.recurrence === "custom") return `Every ${recurWeeks(b)} weeks`;
+  return (RECUR[b.recurrence] || RECUR.none).label;
+}
 // Maps a booking service label to the key used in a pet profile's typical-time fields
 const SERVICE_TIME_KEY = { "Basic": "shower", "Hair Styling": "styling" };
 // Weight-tier pricing (THB) from the shop's price sheet. Each tier's Basic/Hair Styling
@@ -481,9 +498,9 @@ function occurrenceOnDate(booking, dateStr) {
     const startOnly = new Date(start.getFullYear(), start.getMonth(), start.getDate());
     const viewed = new Date(dateStr + "T00:00:00");
     const diffDays = Math.round((viewed - startOnly) / 86400000);
+    const step = recurStepDays(booking); // days between occurrences for week-based recurrences
     let matches = false;
-    if (rec === "weekly") matches = diffDays >= 0 && diffDays % 7 === 0;
-    else if (rec === "biweekly") matches = diffDays >= 0 && diffDays % 14 === 0;
+    if (step) matches = diffDays >= 0 && diffDays % step === 0;
     else if (rec === "monthly") matches = diffDays >= 0 && viewed.getDate() === startOnly.getDate();
     if (!matches) return null;
   }
@@ -531,13 +548,13 @@ function nextOccurrence(b) {
   // Recurring: walk forward to the first occurrence that's today-or-later AND not a deleted
   // "this occurrence" exception (excludedDates).
   const excluded = new Set(b.excludedDates || []);
+  const step = recurStepDays(b);
   const d = new Date(first);
   const guard = 400;
   for (let i = 0; i < guard; i++) {
     if (until && d > until) return null;
     if (d >= today && !excluded.has(dateKey(d))) return d;
-    if (b.recurrence === "weekly") d.setDate(d.getDate() + 7);
-    else if (b.recurrence === "biweekly") d.setDate(d.getDate() + 14);
+    if (step) d.setDate(d.getDate() + step);
     else if (b.recurrence === "monthly") d.setMonth(d.getMonth() + 1);
     else return first;
   }
@@ -554,13 +571,13 @@ function upcomingOccurrences(b, horizonEnd) {
   if (!b.recurrence || b.recurrence === "none") return first >= today ? [first] : [];
   const cap = (until && until < horizonEnd) ? until : horizonEnd;
   const excluded = new Set(b.excludedDates || []);
+  const step = recurStepDays(b);
   const out = [];
   const d = new Date(first);
   for (let i = 0; i < 500; i++) {
     if (d > cap) break;
     if (d >= today && !excluded.has(dateKey(d))) out.push(new Date(d));
-    if (b.recurrence === "weekly") d.setDate(d.getDate() + 7);
-    else if (b.recurrence === "biweekly") d.setDate(d.getDate() + 14);
+    if (step) d.setDate(d.getDate() + step);
     else if (b.recurrence === "monthly") d.setMonth(d.getMonth() + 1);
     else break;
   }
@@ -1086,7 +1103,6 @@ function bookingRow(b, opts = {}) {
   const when = nextOccurrence(b);
   const ended = when === null;
   const shown = when || new Date(b.start);
-  const recur = RECUR[b.recurrence] || RECUR.none;
   const svcText = (b.services && b.services.length)
     ? b.services.map((s) => `${esc(serviceLabel(s))}${b.serviceHours && b.serviceHours[s] ? ` (${b.serviceHours[s]}h)` : ""}`).join(", ")
     : "";
@@ -1108,7 +1124,7 @@ function bookingRow(b, opts = {}) {
         ${svcText ? " · " + svcText : ""}
         ${total ? ` · ${total}h total` : ""}
         ${costLabel ? ` · <strong>${costLabel}</strong>` : ""}
-        ${b.recurrence && b.recurrence !== "none" ? ` <span class="recur-badge">${recur.label}${b.recurrenceUntil ? ` until ${fmtDate(b.recurrenceUntil)}` : ""}</span>` : ""}
+        ${b.recurrence && b.recurrence !== "none" ? ` <span class="recur-badge">${esc(recurLabel(b))}${b.recurrenceUntil ? ` until ${fmtDate(b.recurrenceUntil)}` : ""}</span>` : ""}
       </div>
       ${opts.trashActions ? `<div class="faint" style="font-size:12px; margin-top:2px">Deleted ${timeAgo(b.deletedAt)}${b.deletedBy ? ` by ${esc(b.deletedBy)}` : ""}</div>` : ""}
     </div>
@@ -1308,7 +1324,7 @@ function deleteRecurringModal(b, occKey) {
   const occLabel = fmtDate(new Date(occKey + "T00:00:00"));
   openModal(`
     <h2>Delete recurring booking</h2>
-    <div class="muted" style="margin-bottom:16px">“${esc(b.petName)}” repeats ${(RECUR[b.recurrence] || RECUR.none).label.toLowerCase()}. What would you like to delete?</div>
+    <div class="muted" style="margin-bottom:16px">“${esc(b.petName)}” repeats ${esc(recurLabel(b).toLowerCase())}. What would you like to delete?</div>
     <div class="stack" style="gap:10px">
       <button class="btn block" id="del-occ">Just this one — ${esc(occLabel)}</button>
       <button class="btn block danger" id="del-series">The entire series</button>
@@ -1338,7 +1354,7 @@ function askRecurringSaveScope(b, occKey, canSplit) {
       <div class="scope-backdrop"></div>
       <div class="scope-card">
         <h2>Save recurring booking</h2>
-        <div class="muted" style="margin-bottom:16px">“${esc(b.petName)}” repeats ${(RECUR[b.recurrence] || RECUR.none).label.toLowerCase()}. Where should this change apply?</div>
+        <div class="muted" style="margin-bottom:16px">“${esc(b.petName)}” repeats ${esc(recurLabel(b).toLowerCase())}. Where should this change apply?</div>
         <div class="stack" style="gap:10px">
           ${canSplit ? `<button class="btn block" data-scope="one">Just this one — ${esc(occLabel)}</button>` : ""}
           <button class="btn block primary" data-scope="series">The entire series</button>
@@ -2378,6 +2394,11 @@ function bookingModal(booking, prefillPet, slotPrefill, occurrenceKey, confirmOn
         <select id="b-recur">${Object.entries(RECUR).map(([k, v]) => `<option value="${k}" ${(b.recurrence || "none") === k ? "selected" : ""}>${v.label}</option>`).join("")}</select></div>
     </div>
     <div class="leave-warn" id="b-leave-warn" hidden></div>
+    <div class="field" id="b-weeks-field" ${b.recurrence === "custom" ? "" : "hidden"}>
+      <label>Every how many weeks?</label>
+      <input id="b-weeks" type="number" min="1" step="1" value="${esc(b.recurrenceWeeks || 3)}" placeholder="e.g. 5">
+      <div class="help">Repeats every this many weeks — e.g. 5 = every 5 weeks, 6 = every 6 weeks.</div>
+    </div>
     <div class="field" id="b-until-field" ${(b.recurrence && b.recurrence !== "none") ? "" : "hidden"}>
       <label>Period — repeat until</label>
       <input id="b-until" type="date" value="${esc(b.recurrenceUntil || "")}">
@@ -2582,7 +2603,11 @@ function bookingModal(booking, prefillPet, slotPrefill, occurrenceKey, confirmOn
   $("#b-addon-price").addEventListener("input", updateCostEstimate);
   $("#b-breed").addEventListener("input", updateCostEstimate); // breed drives the premium-breed surcharge
 
-  $("#b-recur").addEventListener("change", () => { $("#b-until-field").hidden = $("#b-recur").value === "none"; });
+  $("#b-recur").addEventListener("change", () => {
+    const v = $("#b-recur").value;
+    $("#b-until-field").hidden = v === "none";
+    $("#b-weeks-field").hidden = v !== "custom"; // the "every N weeks" number only applies to custom
+  });
   $("#b-species").addEventListener("change", () => {
     refreshBreedDatalist();
     $("#b-breed").placeholder = $("#b-species").value === "cat" ? "Persian, or type your own" : "Poodle, or type your own";
@@ -2650,9 +2675,21 @@ function bookingModal(booking, prefillPet, slotPrefill, occurrenceKey, confirmOn
     // Editing an occurrence of a recurring series: ask whether the change is for just that day
     // or the whole series. Asked here, before ANY write below, so cancelling really does leave
     // everything untouched (an earlier position could already have created a new pet record).
+    // Validate the "every N weeks" number up front, before any write, when custom is chosen.
+    const recurrenceKind = $("#b-recur").value;
+    let recurrenceWeeks = null;
+    if (recurrenceKind === "custom") {
+      recurrenceWeeks = Math.round(Number($("#b-weeks").value));
+      if (!recurrenceWeeks || recurrenceWeeks < 1) { toast("Please enter how many weeks to repeat (1 or more)"); $("#b-weeks").focus(); return; }
+    }
+
     let scope = null;
     if (wasRecurring) {
-      const patternChanged = $("#b-recur").value !== (b.recurrence || "none") || ($("#b-until").value || null) !== (b.recurrenceUntil || null);
+      // Changing the repeat kind, the "every N weeks" number, or the end date is a series-level
+      // change — "just this one" can't express it, so it's hidden when the pattern changed.
+      const patternChanged = recurrenceKind !== (b.recurrence || "none")
+        || ($("#b-until").value || null) !== (b.recurrenceUntil || null)
+        || recurrenceWeeks !== (b.recurrenceWeeks || null);
       scope = await askRecurringSaveScope(b, occKeyForEdit, !patternChanged);
       if (!scope) return; // cancelled — nothing written, the form stays open with every edit intact
     }
@@ -2686,7 +2723,7 @@ function bookingModal(booking, prefillPet, slotPrefill, occurrenceKey, confirmOn
     const serviceHours = {};
     checkedServices.forEach((cb) => { serviceHours[cb.dataset.svc] = Number($(`.b-hr[data-svc="${cb.dataset.svc}"]`).value) || 0; });
 
-    const recurrence = $("#b-recur").value;
+    const recurrence = recurrenceKind;
     const rec = {
       id: b.id || DB.uid("bk"),
       createdAt: b.createdAt || Date.now(),
@@ -2694,6 +2731,7 @@ function bookingModal(booking, prefillPet, slotPrefill, occurrenceKey, confirmOn
       start: fromLocalInput($("#b-start").value),
       recurrence,
       recurrenceUntil: recurrence !== "none" ? ($("#b-until").value || null) : null,
+      recurrenceWeeks: recurrence === "custom" ? recurrenceWeeks : null, // "every N weeks" interval, custom only
       services: checkedServices.map((c) => c.dataset.svc),
       serviceHours,
       hairLength,
@@ -2716,7 +2754,7 @@ function bookingModal(booking, prefillPet, slotPrefill, occurrenceKey, confirmOn
       await DB.put("bookings", series); upsertLocal("bookings", series);
       Object.assign(rec, {
         id: DB.uid("bk"), createdAt: Date.now(),
-        recurrence: "none", recurrenceUntil: null, excludedDates: [],
+        recurrence: "none", recurrenceUntil: null, recurrenceWeeks: null, excludedDates: [],
         calendarEventId: null, // must become its own Calendar event, never a PATCH of the series'
         seriesId: b.id,        // provenance: which series this was split out of
       });
