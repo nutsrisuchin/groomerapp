@@ -619,6 +619,14 @@ function groomerLeaveOnDate(groomerId, dateStr) {
   if (!groomerId) return null;
   return state.leaves.find((lv) => lv.groomerId === groomerId && dateStr >= lv.from && dateStr <= lv.to) || null;
 }
+// True if this groomer's weekly schedule marks them as NOT working on `dateStr`'s weekday.
+// `workDays` is an array of weekday indexes (0=Sun..6=Sat) the groomer works; a groomer with
+// no workDays set is treated as working every day (back-compat / the default for existing data).
+function groomerOffOnDate(groomerId, dateStr) {
+  const g = groomerById(groomerId);
+  if (!g || !Array.isArray(g.workDays)) return false;
+  return !g.workDays.includes(new Date(dateStr + "T00:00:00").getDay());
+}
 // Light background tint for a booking row (kept subtle so black text stays easily readable
 // over it) — same alpha level already used for the status-completed/cancelled badge pills.
 function hexToRgba(hex, alpha) {
@@ -2394,6 +2402,7 @@ function bookingModal(booking, prefillPet, slotPrefill, occurrenceKey, confirmOn
         <select id="b-recur">${Object.entries(RECUR).map(([k, v]) => `<option value="${k}" ${(b.recurrence || "none") === k ? "selected" : ""}>${v.label}</option>`).join("")}</select></div>
     </div>
     <div class="leave-warn" id="b-leave-warn" hidden></div>
+    <div class="leave-warn" id="b-workday-warn" hidden></div>
     <div class="field" id="b-weeks-field" ${b.recurrence === "custom" ? "" : "hidden"}>
       <label>Every how many weeks?</label>
       <input id="b-weeks" type="number" min="1" step="1" value="${esc(b.recurrenceWeeks || 3)}" placeholder="e.g. 5">
@@ -2639,9 +2648,26 @@ function bookingModal(booking, prefillPet, slotPrefill, occurrenceKey, confirmOn
       el.hidden = false;
     } else { el.hidden = true; el.textContent = ""; }
   }
-  $("#b-groomer").addEventListener("change", updateLeaveWarning);
-  $("#b-start").addEventListener("change", updateLeaveWarning);
-  updateLeaveWarning();
+  // Warn (inline, and again at save) when the chosen groomer doesn't normally work that weekday.
+  function bookingGroomerOff() {
+    const gid = $("#b-groomer").value;
+    const groomerId = gid === "none" ? null : gid;
+    const startVal = $("#b-start").value;
+    if (!groomerId || !startVal) return false;
+    return groomerOffOnDate(groomerId, dateKey(new Date(startVal)));
+  }
+  function updateWorkdayWarning() {
+    const el = $("#b-workday-warn"); if (!el) return;
+    if (bookingGroomerOff()) {
+      const dow = new Date($("#b-start").value).getDay();
+      el.innerHTML = `📅 <strong>${esc(groomerName($("#b-groomer").value))}</strong> doesn't usually work on ${DAY_NAMES[dow]}s.`;
+      el.hidden = false;
+    } else { el.hidden = true; el.textContent = ""; }
+  }
+  function updateGroomerDayWarnings() { updateLeaveWarning(); updateWorkdayWarning(); }
+  $("#b-groomer").addEventListener("change", updateGroomerDayWarnings);
+  $("#b-start").addEventListener("change", updateGroomerDayWarnings);
+  updateGroomerDayWarnings();
 
   paintAvatar(); paintStatus();
   if (matchedPet) prefillHoursFromPet(); else updateTotal();
@@ -2671,6 +2697,8 @@ function bookingModal(booking, prefillPet, slotPrefill, occurrenceKey, confirmOn
     // Warn (not hard-block) if the chosen groomer is on leave that day — staff can override.
     const leave = bookingLeave();
     if (leave && !confirm(`${groomerName(groomerId)} is on leave on ${fmtDate(new Date($("#b-start").value))}${leave.note ? ` — ${leave.note}` : ""}.\n\nBook anyway?`)) return;
+    // Same soft warning if they don't normally work that weekday — staff can still override.
+    if (bookingGroomerOff() && !confirm(`${groomerName(groomerId)} doesn't usually work on ${DAY_NAMES[new Date($("#b-start").value).getDay()]}s.\n\nBook anyway?`)) return;
 
     // Editing an occurrence of a recurring series: ask whether the change is for just that day
     // or the whole series. Asked here, before ANY write below, so cancelling really does leave
@@ -3131,6 +3159,8 @@ function renderImportReview(candidates, totalFetched) {
 /* ---------- Groomer editor ---------- */
 function groomerModal(groomer) {
   const g = groomer || { color: GROOMER_COLORS[0].color, calendarColorId: GROOMER_COLORS[0].calendarColorId };
+  // Existing groomers with no schedule set default to working every day (nothing changes for them).
+  const workDays = Array.isArray(g.workDays) ? g.workDays : [0, 1, 2, 3, 4, 5, 6];
   openModal(`
     <h2>${groomer ? "Edit groomer" : "Add groomer"}</h2>
     <div class="field"><label>Name</label><input id="g-name" value="${esc(g.name || "")}" placeholder="e.g. Nina"></div>
@@ -3139,6 +3169,10 @@ function groomerModal(groomer) {
         ${GROOMER_COLORS.map((c) => `<div class="color-opt ${c.color === g.color ? "sel" : ""}" data-color="${c.color}" data-cal="${c.calendarColorId}" style="background:${c.color}" title="${esc(c.name)}"></div>`).join("")}
       </div>
       <div class="help">Used on booking stripes and Google Calendar events.</div></div>
+    <div class="field"><label>Works on</label>
+      <div class="tag-list">${DAY_NAMES.map((d, i) => `<label class="chip"><input type="checkbox" class="g-workday" value="${i}" ${workDays.includes(i) ? "checked" : ""}> ${d}</label>`).join("")}</div>
+      <div class="help">Days this groomer is available. Booking them on an off day just shows a warning — it isn't blocked.</div>
+    </div>
     <div class="row" style="justify-content:flex-end; margin-top:8px">
       <button class="btn" data-close-modal>Cancel</button>
       <button class="btn primary" id="save-groomer">Save</button>
@@ -3151,7 +3185,8 @@ function groomerModal(groomer) {
   $("#save-groomer").onclick = async () => {
     const name = $("#g-name").value.trim();
     if (!name) { toast("Please enter a name"); return; }
-    const rec = { id: g.id || DB.uid("grm"), createdAt: g.createdAt || Date.now(), name, color, calendarColorId: cal };
+    const workDays = $$(".g-workday").filter((c) => c.checked).map((c) => Number(c.value));
+    const rec = { id: g.id || DB.uid("grm"), createdAt: g.createdAt || Date.now(), name, color, calendarColorId: cal, workDays };
     await DB.put("groomers", rec);
     upsertLocal("groomers", rec);
     closeModal(); toast(groomer ? "Groomer updated" : "Groomer added"); render();

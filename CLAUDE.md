@@ -271,6 +271,11 @@ Service History; restorable via the Pets page's "🗑 Bin" section, Owner/Admin 
   `completedAt`, and the Calendar sync fields `calendarEventId`/`calendarDirty`/`calendarSyncError`.
 - **`pets`**: `name`, `species` (`dog`/`cat` — pricing and breed lists are species-aware),
   `breed`, `weight`, `groomerId` (usual groomer, prefills new bookings).
+- **`groomers`**: `name`, `color` + `calendarColorId` (see below), and `workDays` (array of
+  weekday indexes 0=Sun..6=Sat the groomer works; **unset/undefined = works every day**, so
+  existing groomers are unaffected). Set via the "Works on" chips in the groomer editor and
+  enforced softly at booking time via `groomerOffOnDate()` — an off-day selection shows an
+  inline warning and a save-time confirm (warn-not-block), mirroring the on-leave behavior.
 - Pricing is weight-tier based, species-separated (`DOG_WEIGHT_TIERS`/`CAT_WEIGHT_TIERS` in
   `app.js`), no in-app editor yet — updating prices means editing those arrays and redeploying.
 - Groomer colors are drawn from the fixed 11-color Google Calendar palette
