@@ -1693,6 +1693,14 @@ function fmtFinancialRange(start, end) {
   return start === end ? fmtDateFull(start) : `${fmtDateFull(start)} – ${fmtDateFull(end)}`;
 }
 
+// The day a completed booking's revenue belongs to in the Financial report: the service date,
+// not the "marked complete" timestamp. One-time bookings use their scheduled `start`; recurring
+// bookings (whose `start` is the possibly-old first occurrence) fall back to the completion day.
+function financialServiceDateKey(b) {
+  if (b.recurrence && b.recurrence !== "none" && b.completedAt) return dateKey(new Date(b.completedAt));
+  return dateKey(new Date(b.start));
+}
+
 // Revenue for a completed/cancelled-irrelevant booking: the staff-entered total if set,
 // otherwise the exact weight-tier estimate (defaults to long-hair pricing if the booking
 // predates the hair-length field — matches what the booking form shows).
@@ -1742,11 +1750,15 @@ function viewFinancial() {
   if (!state.financialCalMonth) state.financialCalMonth = (state.financialEnd || state.financialStart).slice(0, 7);
   const rangeStart = state.financialStart;
   const rangeEnd = state.financialEnd || state.financialStart;
-  // Grouped by when a booking was marked complete (completedAt), not its scheduled date —
-  // a recurring booking's original date can be far in the past by the time it's resolved.
+  // Count revenue on the date the service actually happened, NOT when someone tapped "Complete":
+  // staff often clear several days' worth of bookings in one sitting, which used to pile them all
+  // onto the completion day (e.g. finishing Wed/Thu bookings on Friday made them all count as
+  // Friday). For a one-time booking the service date is its scheduled `start`; a recurring
+  // booking's stored `start` is the (possibly long-past) first occurrence, so for those we fall
+  // back to the completion day as the best available proxy for the occurrence that was serviced.
   const completed = state.bookings.filter((b) => {
-    if (b.status !== "completed" || !b.completedAt) return false;
-    const k = dateKey(new Date(b.completedAt));
+    if (b.status !== "completed") return false;
+    const k = financialServiceDateKey(b);
     return k >= rangeStart && k <= rangeEnd;
   });
   const totalRevenue = completed.reduce((sum, b) => sum + bookingRevenue(b), 0);
@@ -1804,7 +1816,10 @@ function viewFinancial() {
   <div class="card bookings-section" style="margin-top:16px">
     <div class="card pad" style="padding-bottom:0; border:0"><div class="section-title">All Bookings (${completed.length})</div></div>
     ${completed.length
-      ? [...completed].sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0)).map((b) => bookingRow(b)).join("")
+      ? [...completed].sort((a, b) => {
+          const ka = financialServiceDateKey(a), kb = financialServiceDateKey(b);
+          return ka !== kb ? kb.localeCompare(ka) : new Date(b.start) - new Date(a.start); // newest service date first
+        }).map((b) => bookingRow(b)).join("")
       : emptyBlock("📅", "No completed bookings in this range", "Pick a different day or period above, or complete a booking to see it here.")}
   </div>`;
 }
