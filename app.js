@@ -1174,11 +1174,31 @@ function homeUpcomingList(bookings, petId, opts = {}) {
     if (!byKey.has(key)) { const g = { when, items: [] }; byKey.set(key, g); groups.push(g); }
     byKey.get(key).items.push({ b, when });
   });
+  // A leave day needs its own row even if nothing has been booked yet.  Previously the
+  // groups above came only from booking occurrences, so the leave chip could only appear
+  // beside an existing booking. Keep this internal-only, just like the leave chip itself:
+  // the pet-detail list should remain a list of that pet's actual appointments.
+  const showLeave = !opts.hidePrice;
+  if (showLeave) {
+    const today = todayKey();
+    state.leaves.forEach((leave) => {
+      const from = leave.from && leave.from > today ? leave.from : today;
+      const to = leave.to || leave.from;
+      if (!from || !to || to < today) return;
+      for (let day = from; day <= to; day = addDaysKey(day, 1)) {
+        if (!byKey.has(day)) {
+          const g = { when: new Date(day + "T00:00:00"), items: [] };
+          byKey.set(day, g);
+          groups.push(g);
+        }
+      }
+    });
+    groups.sort((a, z) => a.when - z.when);
+  }
   // data-date drives "click empty space in this day's row to add a booking on that day" —
   // wired in bindView(), which ignores clicks that land on a booking block (those edit).
   // The on-leave tag is skipped on the customer-facing pet-detail list (hidePrice) — it's
   // internal shop info, not something to show a customer in a screenshot.
-  const showLeave = !opts.hidePrice;
   return groups.map((g) => {
     const dk = dateKey(g.when);
     const onLeave = showLeave ? state.groomers.filter((gr) => groomerLeaveOnDate(gr.id, dk)).map((gr) => gr.name) : [];
