@@ -35,6 +35,17 @@
   const auth = firebase.auth();
   const store = firebase.firestore();
 
+  // Cache synced documents in IndexedDB so reopening the app paints from local disk immediately
+  // and the network only carries what changed since last time (Firestore persists resume tokens
+  // next to the data). Without this every open re-downloaded every collection in full — and since
+  // pet photos live as base64 data URLs inside their own documents, that was tens of MB and ~30s
+  // on a phone before anything appeared. Must be called before any other Firestore use.
+  // Best-effort: if it can't be enabled the app just behaves as it did before (network-only).
+  //   failed-precondition — another tab holds persistence without multi-tab sync
+  //   unimplemented       — browser/mode has no IndexedDB (e.g. some private-browsing modes)
+  store.enablePersistence({ synchronizeTabs: true })
+    .catch((err) => console.error("Firestore offline persistence unavailable", err.code || err));
+
   // Session persists across refreshes/reopens (Firebase's default) — Google Calendar
   // always needs reconnecting fresh regardless (that's a separate, deliberately
   // memory-only connection; see calendar.js), and the app-wide banner already prompts
