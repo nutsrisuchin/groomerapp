@@ -564,12 +564,17 @@ function nextOccurrence(b) {
 // booking yields its single date (if today or later) regardless of the horizon; a recurring
 // booking yields one entry per occurrence up to min(recurrenceUntil, horizonEnd) — this is how
 // the Home/pet upcoming lists show a weekly booking on each of its days, not just the next one.
+// If the series' own first occurrence hasn't happened yet and is itself further out than
+// horizonEnd (e.g. a monthly booking set up months in advance, before today gets within the
+// horizon of it), the horizon is pushed out to that first occurrence so the booking still shows
+// its next date on Home — same as the Schedule/Bookings tabs, which have no horizon at all.
 function upcomingOccurrences(b, horizonEnd) {
   const today = startOfToday();
   const first = new Date(b.start);
   const until = b.recurrenceUntil ? new Date(b.recurrenceUntil + "T23:59:59") : null;
   if (!b.recurrence || b.recurrence === "none") return first >= today ? [first] : [];
-  const cap = (until && until < horizonEnd) ? until : horizonEnd;
+  const effectiveHorizon = first > horizonEnd ? first : horizonEnd;
+  const cap = (until && until < effectiveHorizon) ? until : effectiveHorizon;
   const excluded = new Set(b.excludedDates || []);
   const step = recurStepDays(b);
   const out = [];
@@ -1401,12 +1406,41 @@ function askRecurringSaveScope(b, occKey, canSplit) {
   });
 }
 
-// "confirmed น้อง {name} {breed} {date & time}" — ready to paste to a customer.
-// Uses the upcoming occurrence for recurring bookings (same date bookingRow shows), not the original start.
+// All (today-or-later) occurrence dates for a recurring booking's confirmation message, from
+// today through recurrenceUntil — every remaining date in the series, not a rolling display
+// window like the Home page's upcomingOccurrences(). Bookings always set a "repeat until" date
+// (no open-ended series in this app); returns [] if one's somehow missing on older data, so the
+// caller falls back to just the next date instead of listing "every date forever".
+function confirmMessageOccurrences(b) {
+  if (!b.recurrenceUntil) return [];
+  const today = startOfToday();
+  const until = new Date(b.recurrenceUntil + "T23:59:59");
+  const excluded = new Set(b.excludedDates || []);
+  const step = recurStepDays(b);
+  const out = [];
+  const d = new Date(b.start);
+  for (let i = 0; i < 500; i++) {
+    if (d > until) break;
+    if (d >= today && !excluded.has(dateKey(d))) out.push(new Date(d));
+    if (step) d.setDate(d.getDate() + step);
+    else if (b.recurrence === "monthly") d.setMonth(d.getMonth() + 1);
+    else break;
+  }
+  return out;
+}
+
+// "confirmed น้อง {name} {breed} {date & time}" — ready to paste to a customer. A recurring
+// booking lists every remaining occurrence date, one per line, so the customer sees the whole
+// schedule in one message instead of just the next visit.
 function bookingConfirmMessage(b) {
-  const when = nextOccurrence(b) || new Date(b.start);
   const services = (b.services || []).map(serviceLabel).join(", ");
-  return ["confirmed", `N'${b.petName}`, b.breed, services, `${fmtDate(when)} ${fmtTime(when)}`].filter(Boolean).join(" ");
+  const prefix = ["confirmed", `N'${b.petName}`, b.breed, services].filter(Boolean).join(" ");
+  if (b.recurrence && b.recurrence !== "none") {
+    const occs = confirmMessageOccurrences(b);
+    if (occs.length) return `${prefix}\n${occs.map((d) => `${fmtDate(d)} ${fmtTime(d)}`).join("\n")}`;
+  }
+  const when = nextOccurrence(b) || new Date(b.start);
+  return `${prefix} ${fmtDate(when)} ${fmtTime(when)}`;
 }
 
 // Shown right after a NEW booking is saved: surfaces the customer confirmation message so
@@ -2444,9 +2478,9 @@ function bookingModal(booking, prefillPet, slotPrefill, occurrenceKey, confirmOn
       <div class="help">Repeats every this many weeks — e.g. 5 = every 5 weeks, 6 = every 6 weeks.</div>
     </div>
     <div class="field" id="b-until-field" ${(b.recurrence && b.recurrence !== "none") ? "" : "hidden"}>
-      <label>Period — repeat until</label>
-      <input id="b-until" type="date" value="${esc(b.recurrenceUntil || "")}">
-      <div class="help">Leave blank to repeat with no set end date.</div>
+      <label>Period — repeat until (required)</label>
+      <input id="b-until" type="date" value="${esc(b.recurrenceUntil || "")}" required>
+      <div class="help">Every repeat booking needs an end date.</div>
     </div>
 
     <div class="field"><label>Services &amp; time (hours) — shown on Google Calendar</label>
@@ -2744,6 +2778,12 @@ function bookingModal(booking, prefillPet, slotPrefill, occurrenceKey, confirmOn
     if (recurrenceKind === "custom") {
       recurrenceWeeks = Math.round(Number($("#b-weeks").value));
       if (!recurrenceWeeks || recurrenceWeeks < 1) { toast("Please enter how many weeks to repeat (1 or more)"); $("#b-weeks").focus(); return; }
+    }
+    // "Repeat until" is required for any recurring booking — an open-ended series has no defined
+    // end for the confirmation message to list dates up to (see confirmMessageOccurrences()), and
+    // this shop's policy is every repeat booking gets a known end date anyway.
+    if (recurrenceKind !== "none" && !$("#b-until").value) {
+      toast("Please choose a \"Repeat until\" date"); $("#b-until").focus(); return;
     }
 
     let scope = null;
@@ -3222,10 +3262,17 @@ function groomerModal(groomer) {
     if (!name) { toast("Please enter a name"); return; }
     const workDays = $$(".g-workday").filter((c) => c.checked).map((c) => Number(c.value));
     const rec = { id: g.id || DB.uid("grm"), createdAt: g.createdAt || Date.now(), name, color, calendarColorId: cal, workDays };
-    await DB.put("groomers", rec);
-    upsertLocal("groomers", rec);
-    closeModal(); toast(groomer ? "Groomer updated" : "Groomer added"); render();
-    logActivity("groomer", groomer ? "updated" : "created", rec.name);
+    const btn = $("#save-groomer");
+    btn.disabled = true; btn.textContent = groomer ? "Saving…" : "Adding…";
+    try {
+      await DB.put("groomers", rec);
+      upsertLocal("groomers", rec);
+      closeModal(); toast(groomer ? "Groomer updated" : "Groomer added"); render();
+      logActivity("groomer", groomer ? "updated" : "created", rec.name);
+    } catch (err) {
+      toast(`Couldn't save that groomer (${err.code || err.message}).`);
+      btn.disabled = false; btn.textContent = "Save";
+    }
   };
 }
 
