@@ -1148,6 +1148,7 @@ function bookingRow(b, opts = {}) {
           <button class="btn sm danger" data-action="cancel-booking" data-id="${b.id}">✕ Cancel</button>` : ""}
         <button class="btn sm" data-action="edit-booking" data-id="${b.id}">Edit</button>
         <button class="icon-btn" data-action="copy-confirm" data-id="${b.id}" title="Copy confirmation message">📋</button>
+        <button class="icon-btn" data-action="copy-remind" data-id="${b.id}" title="Copy reminder message">⏰</button>
         ${canDelete() ? `<button class="icon-btn" data-action="del-booking" data-id="${b.id}" title="Delete">🗑</button>` : ""}
       `}
     </div>
@@ -1424,6 +1425,14 @@ function confirmMessageOccurrences(b) {
     else break;
   }
   return out;
+}
+
+// The day-before reminder staff send the customer, in Thai. Always about one specific visit —
+// the next occurrence for a recurring booking — since "พรุ่งนี้" (tomorrow) only ever means a
+// single date, so this needs no series/occurrence choice the way the confirmation message does.
+function bookingRemindMessage(b, when) {
+  const w = when || nextOccurrence(b) || new Date(b.start);
+  return `สวัสดีค่ะ พรุ่งนี้น้อง ${b.petName} มีนัดที่ร้านเวลา ${fmtTime(w)} นะคะ 🙏🏻💓`;
 }
 
 // "confirmed น้อง {name} {breed} {date & time}" — ready to paste to a customer, for a single
@@ -3474,6 +3483,13 @@ async function handleAction(action, data) {
       if (b.recurrence && b.recurrence !== "none") { confirmMessageScopeModal(b); break; }
       const msg = bookingConfirmMessageOne(b);
       try { await navigator.clipboard.writeText(msg); toast("Copied — ready to paste to the customer"); }
+      catch (err) { toast(`Couldn't copy automatically — here it is: ${msg}`); }
+    } break;
+    case "copy-remind": {
+      const b = state.bookings.find((x) => x.id === data.id);
+      if (!b) break;
+      const msg = bookingRemindMessage(b);
+      try { await navigator.clipboard.writeText(msg); toast("Reminder copied — ready to paste to the customer"); }
       catch (err) { toast(`Couldn't copy automatically — here it is: ${msg}`); }
     } break;
     case "del-booking":
