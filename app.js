@@ -560,21 +560,18 @@ function nextOccurrence(b) {
   }
   return d;
 }
-// Every occurrence of a booking from today up to `horizonEnd`, as Date objects. A one-time
-// booking yields its single date (if today or later) regardless of the horizon; a recurring
-// booking yields one entry per occurrence up to min(recurrenceUntil, horizonEnd) — this is how
-// the Home/pet upcoming lists show a weekly booking on each of its days, not just the next one.
-// If the series' own first occurrence hasn't happened yet and is itself further out than
-// horizonEnd (e.g. a monthly booking set up months in advance, before today gets within the
-// horizon of it), the horizon is pushed out to that first occurrence so the booking still shows
-// its next date on Home — same as the Schedule/Bookings tabs, which have no horizon at all.
+// Every upcoming occurrence of a booking as Date objects. A one-time booking yields its single
+// date (if today or later); a recurring one yields an entry per occurrence through its
+// "repeat until" end date — the whole series, not a rolling window, because staff want the
+// complete schedule visible on Home however far out it starts (a series booked for next year
+// would otherwise show a single row, or none at all). `horizonEnd` is only a fallback bound for
+// legacy records saved before "repeat until" became a required field.
 function upcomingOccurrences(b, horizonEnd) {
   const today = startOfToday();
   const first = new Date(b.start);
   const until = b.recurrenceUntil ? new Date(b.recurrenceUntil + "T23:59:59") : null;
   if (!b.recurrence || b.recurrence === "none") return first >= today ? [first] : [];
-  const effectiveHorizon = first > horizonEnd ? first : horizonEnd;
-  const cap = (until && until < effectiveHorizon) ? until : effectiveHorizon;
+  const cap = until || horizonEnd;
   const excluded = new Set(b.excludedDates || []);
   const step = recurStepDays(b);
   const out = [];
