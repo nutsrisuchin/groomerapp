@@ -1429,18 +1429,56 @@ function confirmMessageOccurrences(b) {
   return out;
 }
 
-// "confirmed น้อง {name} {breed} {date & time}" — ready to paste to a customer. A recurring
-// booking lists every remaining occurrence date, one per line, so the customer sees the whole
-// schedule in one message instead of just the next visit.
-function bookingConfirmMessage(b) {
+// "confirmed น้อง {name} {breed} {date & time}" — ready to paste to a customer, for a single
+// occurrence (the next one, or `when` if a specific occurrence is given). Used as-is for a
+// non-recurring booking, and as the "just this date" choice for a recurring one — see
+// confirmMessageScopeModal().
+function bookingConfirmMessageOne(b, when) {
   const services = (b.services || []).map(serviceLabel).join(", ");
   const prefix = ["confirmed", `N'${b.petName}`, b.breed, services].filter(Boolean).join(" ");
+  const w = when || nextOccurrence(b) || new Date(b.start);
+  return `${prefix} ${fmtDate(w)} ${fmtTime(w)}`;
+}
+
+// Same, but for a recurring booking lists every remaining occurrence date, one per line, so the
+// customer sees the whole schedule in one message instead of just the next visit. Falls back to
+// the single-date form for a non-recurring booking, or if the series has no remaining dates.
+function bookingConfirmMessageAll(b) {
   if (b.recurrence && b.recurrence !== "none") {
+    const services = (b.services || []).map(serviceLabel).join(", ");
+    const prefix = ["confirmed", `N'${b.petName}`, b.breed, services].filter(Boolean).join(" ");
     const occs = confirmMessageOccurrences(b);
     if (occs.length) return `${prefix}\n${occs.map((d) => `${fmtDate(d)} ${fmtTime(d)}`).join("\n")}`;
   }
+  return bookingConfirmMessageOne(b);
+}
+
+// Default entry point where no scope choice is offered (e.g. right after creating a booking) —
+// always the full series for a recurring booking.
+function bookingConfirmMessage(b) { return bookingConfirmMessageAll(b); }
+
+// Asked when copying a recurring booking's confirmation message from a list row (Bookings /
+// Financial pages): send just the occurrence that row represents, or every date in the series?
+// Unlike askRecurringSaveScope, this isn't stacked over another open modal — copy-confirm is
+// triggered directly from the page — so a normal openModal() is fine here.
+function confirmMessageScopeModal(b) {
   const when = nextOccurrence(b) || new Date(b.start);
-  return `${prefix} ${fmtDate(when)} ${fmtTime(when)}`;
+  const occLabel = `${fmtDate(when)} ${fmtTime(when)}`;
+  openModal(`
+    <h2>Copy confirmation message</h2>
+    <div class="muted" style="margin-bottom:16px">“${esc(b.petName)}” repeats ${esc(recurLabel(b).toLowerCase())}. Which dates should the message include?</div>
+    <div class="stack" style="gap:10px">
+      <button class="btn block" id="cm-one">Just this date — ${esc(occLabel)}</button>
+      <button class="btn block primary" id="cm-all">All repeat dates</button>
+      <button class="btn block" data-close-modal>Cancel</button>
+    </div>`);
+  const copyAndClose = async (msg) => {
+    closeModal();
+    try { await navigator.clipboard.writeText(msg); toast("Copied — ready to paste to the customer"); }
+    catch (err) { toast(`Couldn't copy automatically — here it is: ${msg}`); }
+  };
+  $("#cm-one").onclick = () => copyAndClose(bookingConfirmMessageOne(b, when));
+  $("#cm-all").onclick = () => copyAndClose(bookingConfirmMessageAll(b));
 }
 
 // Shown right after a NEW booking is saved: surfaces the customer confirmation message so
@@ -3436,7 +3474,8 @@ async function handleAction(action, data) {
     case "copy-confirm": {
       const b = state.bookings.find((x) => x.id === data.id);
       if (!b) break;
-      const msg = bookingConfirmMessage(b);
+      if (b.recurrence && b.recurrence !== "none") { confirmMessageScopeModal(b); break; }
+      const msg = bookingConfirmMessageOne(b);
       try { await navigator.clipboard.writeText(msg); toast("Copied — ready to paste to the customer"); }
       catch (err) { toast(`Couldn't copy automatically — here it is: ${msg}`); }
     } break;
