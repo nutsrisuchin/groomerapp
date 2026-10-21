@@ -169,7 +169,10 @@
     // Google rejects the request outright ("Missing time zone definition") if it can't be
     // certain the dateTime is unambiguous — always pin an explicit IANA zone as a safety
     // net, even though booking.start should normally already carry a "Z"/UTC offset.
-    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    // Pinned to the shop's own zone rather than the device's: a series created while a staff
+    // member is abroad would otherwise recur in that zone and shift by an hour whenever it
+    // changes for daylight saving. Thailand has no DST, so this stays stable year-round.
+    const timeZone = "Asia/Bangkok";
     const event = {
       summary: parts.join(" "),
       start: { dateTime: booking.start, timeZone },
@@ -185,8 +188,8 @@
       // time-of-day in the same zone so they line up with a generated instance.
       const ex = booking.excludedDates || [];
       if (ex.length) {
-        const s = new Date(booking.start);
-        const hms = `${String(s.getHours()).padStart(2, "0")}${String(s.getMinutes()).padStart(2, "0")}00`;
+        const s = new Date(new Date(booking.start).getTime() + 7 * 3600 * 1000); // read as Bangkok wall-clock
+        const hms = `${String(s.getUTCHours()).padStart(2, "0")}${String(s.getUTCMinutes()).padStart(2, "0")}00`;
         ex.forEach((dk) => event.recurrence.push(`EXDATE;TZID=${timeZone}:${dk.replace(/-/g, "")}T${hms}`));
       }
     }

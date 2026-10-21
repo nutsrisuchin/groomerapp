@@ -221,6 +221,30 @@ Chrome DevTools' device emulation caught the same rendering bug.
   hiding this file. Don't reflexively `.gitignore` a Firebase web config out of habit copied
   from other stacks.
 
+## [Reusable] One fixed timezone, never the device's
+
+Every date and time in this app is **Asia/Bangkok**, wherever the phone happens to be — the shop
+owner travels, and a booking typed as "10:00" abroad used to be stored at 10:00 *local*, i.e. the
+wrong hour in Thailand, with existing bookings also displayed shifted. Generalises to any app
+whose data belongs to one physical place rather than to whoever is looking at it:
+
+- **No device-local date getter anywhere** — no `getHours`/`getDate`/`getMonth`/`setHours`. Instants
+  are read through `shopParts()` (shifts by the fixed offset so `getUTC*` reads Bangkok fields) and
+  built with `shopInstant()`. Every `toLocale*String` passes an explicit `timeZone`.
+- **Two kinds of value, deliberately kept apart.** An *instant* (`booking.start`, `Date.now()`)
+  converts via the shop-time helpers. A *day key* (`"YYYY-MM-DD"`) is a calendar label, not a
+  moment: all key arithmetic runs in UTC (`keyUTC`/`utcKey`) so it can't drift a day, and
+  `keyToDate()` turns one into its Bangkok-midnight instant when an instant is genuinely needed.
+- **Step recurrences by arithmetic, not `setDate`/`setMonth`** (`addDaysInstant`/`addMonthsInstant`)
+  — on a device in a daylight-saving zone the setters silently shift every later occurrence by an
+  hour.
+- **Storage format is unchanged** (ISO instants) — only reading and writing were pinned, so no
+  migration was needed. Bookings created before this while abroad would still hold a wrong instant.
+- Google Calendar gets `timeZone: "Asia/Bangkok"` too (`calendar.js`), not the device's — otherwise
+  a series created abroad recurs in that zone and drifts when its DST changes.
+- Thailand has been UTC+7 with no DST since 1920, so a fixed offset is exact here; an app pinned to
+  a DST-observing zone would need real zone lookups instead of a constant.
+
 ## [Reusable] Workflow conventions observed in this project
 
 - **Always `node --check <file>.js` after every edit**, before considering a change done — this
@@ -230,7 +254,12 @@ Chrome DevTools' device emulation caught the same rendering bug.
   logical feature (not one per file-edit), with a message explaining *why*, not just what
   changed — and pushed only when explicitly asked, even though this user pushes almost every
   time. Don't assume standing permission to push from one instance of "commit and push now."
-- This app has no test suite and no browser-automation tool is available in this environment —
+- **`node test.js` covers the date/time layer — run it after touching anything date-related.**
+  It loads `app.js` into a `vm` context behind a stub DOM (no build step, no test framework) and
+  re-runs itself as child processes under several timezones, failing if any answer differs. Note
+  Git Bash on Windows silently drops a `TZ=x node ...` prefix, so pass the zone through an
+  explicit `env` as the suite does, or the check passes vacuously.
+- Beyond that suite there's no test coverage, and no browser-automation tool is available here —
   verification is `node --check` (syntax only) plus careful code review, and any claim about
   actual rendered/runtime behavior should say plainly that it wasn't visually verified, rather
   than implying it was. The app also requires a live Firebase PIN login against real Firestore

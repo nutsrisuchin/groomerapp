@@ -433,42 +433,78 @@ const ACTIVITY_ICON = {
   pet: { created: "🐾", updated: "✏️", deleted: "🗑", restored: "↩️", purged: "🗑" },
 };
 
-/* ---------- date helpers ---------- */
-function fmtDate(d) { return new Date(d).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }); }
-function fmtTime(d) { return new Date(d).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }); }
-function startOfToday() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
-function dateKey(d) { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`; }
+/* ---------- date helpers ----------
+   The shop runs on Thai time wherever the phone is. Staff travelling abroad must still see —
+   and enter — Bangkok wall-clock times, otherwise a booking typed as "10:00" lands in the
+   database at the wrong hour and the customer turns up on the wrong side of the day. So no
+   device-local date getter (getHours/getDate/setHours...) is used anywhere below.
+
+   Two different kinds of value, deliberately handled in different ways:
+     • an INSTANT (booking.start, Date.now()) — converted to and from Bangkok wall-clock with
+       shopParts() / shopInstant().
+     • a DAY KEY ("YYYY-MM-DD") — pure calendar arithmetic, done entirely in UTC so it can
+       never drift a day either way; keyToDate() turns one into its Bangkok-midnight instant.
+
+   Thailand has been permanently UTC+7 with no daylight saving since 1920, so a fixed offset is
+   exact here — no timezone database lookup needed for the arithmetic. */
+const SHOP_TZ = "Asia/Bangkok";
+const SHOP_OFFSET_MS = 7 * 60 * 60 * 1000;
+const pad2 = (n) => String(n).padStart(2, "0");
+// Shifts an instant so its getUTC* getters read Bangkok wall-clock fields.
+function shopParts(d) { return new Date(new Date(d).getTime() + SHOP_OFFSET_MS); }
+// The real instant for a given Bangkok wall-clock time.
+function shopInstant(y, mo, day, h = 0, mi = 0) { return new Date(Date.UTC(y, mo, day, h, mi) - SHOP_OFFSET_MS); }
+// "YYYY-MM-DD" → the instant of midnight Bangkok time that day.
+function keyToDate(dateStr) { const [y, m, d] = dateStr.split("-").map(Number); return shopInstant(y, m - 1, d); }
+// Day-key arithmetic helpers — UTC in, UTC out, never touching local time.
+function keyUTC(dateStr) { return new Date(dateStr + "T00:00:00Z"); }
+// The last millisecond of a day key, Bangkok time — an inclusive "repeat until" end.
+function keyEndOfDay(dateStr) { return new Date(keyToDate(dateStr).getTime() + 86400000 - 1); }
+// A day key plus minutes-past-midnight → the matching Bangkok instant.
+function keyAtMinute(dateStr, min) { const [y, m, d] = dateStr.split("-").map(Number); return shopInstant(y, m - 1, d, Math.floor(min / 60), min % 60); }
+// Step an instant by whole days / months while keeping its Bangkok time of day. Done this way
+// rather than setDate()/setMonth() so a device sitting in a daylight-saving zone cannot shift
+// every later occurrence of a series by an hour.
+function addDaysInstant(d, n) { return new Date(new Date(d).getTime() + n * 86400000); }
+function addMonthsInstant(d, n) { const x = shopParts(d); return shopInstant(x.getUTCFullYear(), x.getUTCMonth() + n, x.getUTCDate(), x.getUTCHours(), x.getUTCMinutes()); }
+function utcKey(d) { return d.toISOString().slice(0, 10); }
+
+function fmtDate(d) { return new Date(d).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", timeZone: SHOP_TZ }); }
+function fmtTime(d) { return new Date(d).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", timeZone: SHOP_TZ }); }
+function startOfToday() { const x = shopParts(new Date()); return shopInstant(x.getUTCFullYear(), x.getUTCMonth(), x.getUTCDate()); }
+function dateKey(d) { const x = shopParts(d); return `${x.getUTCFullYear()}-${pad2(x.getUTCMonth() + 1)}-${pad2(x.getUTCDate())}`; }
 function todayKey() { return dateKey(new Date()); }
-function addDaysKey(dateStr, n) { const d = new Date(dateStr + "T00:00:00"); d.setDate(d.getDate() + n); return dateKey(d); }
+function addDaysKey(dateStr, n) { const d = keyUTC(dateStr); d.setUTCDate(d.getUTCDate() + n); return utcKey(d); }
 function addMonthsKey(dateStr, n) {
-  const d = new Date(dateStr + "T00:00:00");
-  const day = d.getDate();
-  d.setDate(1); // avoid rollover bugs (e.g. Jan 31 + 1 month)
-  d.setMonth(d.getMonth() + n);
-  const daysInTarget = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-  d.setDate(Math.min(day, daysInTarget));
-  return dateKey(d);
+  const d = keyUTC(dateStr);
+  const day = d.getUTCDate();
+  d.setUTCDate(1); // avoid rollover bugs (e.g. Jan 31 + 1 month)
+  d.setUTCMonth(d.getUTCMonth() + n);
+  const daysInTarget = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  d.setUTCDate(Math.min(day, daysInTarget));
+  return utcKey(d);
 }
-function startOfWeekKey(dateStr) { const d = new Date(dateStr + "T00:00:00"); d.setDate(d.getDate() - d.getDay()); return dateKey(d); }
+function startOfWeekKey(dateStr) { const d = keyUTC(dateStr); d.setUTCDate(d.getUTCDate() - d.getUTCDay()); return utcKey(d); }
 // 6 full weeks (42 days) starting the Sunday on/before the 1st of the month — a stable grid size.
 function monthGridDates(dateStr) {
-  const d = new Date(dateStr + "T00:00:00");
-  const start = new Date(d.getFullYear(), d.getMonth(), 1);
-  start.setDate(start.getDate() - start.getDay());
+  const d = keyUTC(dateStr);
+  const start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
+  start.setUTCDate(start.getUTCDate() - start.getUTCDay());
   const dates = [];
-  for (let i = 0; i < 42; i++) { const cur = new Date(start); cur.setDate(start.getDate() + i); dates.push(dateKey(cur)); }
+  for (let i = 0; i < 42; i++) { const cur = new Date(start); cur.setUTCDate(start.getUTCDate() + i); dates.push(utcKey(cur)); }
   return dates;
 }
-function fmtDateKey(dateStr) { return new Date(dateStr + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short", year: "numeric" }); }
+// A day key is formatted from its own UTC value, so the date shown always matches the key.
+function fmtDateKey(dateStr) { return keyUTC(dateStr).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }); }
 function fmtWeekRange(dateStr) {
   const start = startOfWeekKey(dateStr), end = addDaysKey(start, 6);
-  const s = new Date(start + "T00:00:00"), e = new Date(end + "T00:00:00");
-  const sameMonth = s.getMonth() === e.getMonth();
-  const sFmt = s.toLocaleDateString(undefined, { day: "numeric", month: "short" });
-  const eFmt = e.toLocaleDateString(undefined, sameMonth ? { day: "numeric" } : { day: "numeric", month: "short" });
-  return `${sFmt} – ${eFmt}, ${e.getFullYear()}`;
+  const s = keyUTC(start), e = keyUTC(end);
+  const sameMonth = s.getUTCMonth() === e.getUTCMonth();
+  const sFmt = s.toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" });
+  const eFmt = e.toLocaleDateString(undefined, sameMonth ? { day: "numeric", timeZone: "UTC" } : { day: "numeric", month: "short", timeZone: "UTC" });
+  return `${sFmt} – ${eFmt}, ${e.getUTCFullYear()}`;
 }
-function fmtMonthKey(dateStr) { return new Date(dateStr + "T00:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }); }
+function fmtMonthKey(dateStr) { return keyUTC(dateStr).toLocaleDateString(undefined, { month: "long", year: "numeric", timeZone: "UTC" }); }
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAY_NAMES_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -479,9 +515,8 @@ function getBusinessHours() {
 }
 function toMinutes(hhmm) { const [h, m] = hhmm.split(":").map(Number); return h * 60 + (m || 0); }
 function fmtMinutes(min) {
-  const h = Math.floor(min / 60), m = min % 60;
-  const d = new Date(); d.setHours(h, m, 0, 0);
-  return fmtTime(d);
+  const t = shopParts(new Date());
+  return fmtTime(shopInstant(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate(), Math.floor(min / 60), min % 60));
 }
 
 // Does `booking` occur on `dateStr` ("YYYY-MM-DD")? Returns the occurrence's
@@ -495,18 +530,16 @@ function occurrenceOnDate(booking, dateStr) {
   const rec = booking.recurrence || "none";
   if (rec === "none") { if (dateStr !== startKey) return null; }
   else {
-    const startOnly = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-    const viewed = new Date(dateStr + "T00:00:00");
-    const diffDays = Math.round((viewed - startOnly) / 86400000);
+    const diffDays = Math.round((keyUTC(dateStr) - keyUTC(startKey)) / 86400000);
     const step = recurStepDays(booking); // days between occurrences for week-based recurrences
     let matches = false;
     if (step) matches = diffDays >= 0 && diffDays % step === 0;
-    else if (rec === "monthly") matches = diffDays >= 0 && viewed.getDate() === startOnly.getDate();
+    else if (rec === "monthly") matches = diffDays >= 0 && keyUTC(dateStr).getUTCDate() === keyUTC(startKey).getUTCDate();
     if (!matches) return null;
   }
-  const occ = new Date(dateStr + "T00:00:00");
-  occ.setHours(start.getHours(), start.getMinutes(), 0, 0);
-  return occ;
+  const sp = shopParts(start);
+  const [oy, om, od] = dateStr.split("-").map(Number);
+  return shopInstant(oy, om - 1, od, sp.getUTCHours(), sp.getUTCMinutes());
 }
 
 // Free minute-ranges within [openMin, closeMin), given sorted busy {startMin, endMin} blocks.
@@ -529,7 +562,8 @@ function bookingsOnDate(dateStr) {
     .map((b) => {
       const occ = occurrenceOnDate(b, dateStr);
       if (!occ) return null;
-      const startMin = occ.getHours() * 60 + occ.getMinutes();
+      const sp = shopParts(occ);
+      const startMin = sp.getUTCHours() * 60 + sp.getUTCMinutes();
       const dur = bookingDurationHours(b) || 1;
       return { booking: b, groomer: groomerById(b.groomerId), startMin, endMin: startMin + Math.round(dur * 60) };
     })
@@ -542,20 +576,20 @@ function bookingsOnDate(dateStr) {
 function nextOccurrence(b) {
   const first = new Date(b.start);
   const today = startOfToday();
-  const until = b.recurrenceUntil ? new Date(b.recurrenceUntil + "T23:59:59") : null;
+  const until = b.recurrenceUntil ? keyEndOfDay(b.recurrenceUntil) : null;
   if (until && first > until) return null;
   if (!b.recurrence || b.recurrence === "none") return first;
   // Recurring: walk forward to the first occurrence that's today-or-later AND not a deleted
   // "this occurrence" exception (excludedDates).
   const excluded = new Set(b.excludedDates || []);
   const step = recurStepDays(b);
-  const d = new Date(first);
+  let d = new Date(first);
   const guard = 400;
   for (let i = 0; i < guard; i++) {
     if (until && d > until) return null;
     if (d >= today && !excluded.has(dateKey(d))) return d;
-    if (step) d.setDate(d.getDate() + step);
-    else if (b.recurrence === "monthly") d.setMonth(d.getMonth() + 1);
+    if (step) d = addDaysInstant(d, step);
+    else if (b.recurrence === "monthly") d = addMonthsInstant(d, 1);
     else return first;
   }
   return d;
@@ -569,18 +603,18 @@ function nextOccurrence(b) {
 function upcomingOccurrences(b, horizonEnd) {
   const today = startOfToday();
   const first = new Date(b.start);
-  const until = b.recurrenceUntil ? new Date(b.recurrenceUntil + "T23:59:59") : null;
+  const until = b.recurrenceUntil ? keyEndOfDay(b.recurrenceUntil) : null;
   if (!b.recurrence || b.recurrence === "none") return first >= today ? [first] : [];
   const cap = until || horizonEnd;
   const excluded = new Set(b.excludedDates || []);
   const step = recurStepDays(b);
   const out = [];
-  const d = new Date(first);
+  let d = new Date(first);
   for (let i = 0; i < 500; i++) {
     if (d > cap) break;
     if (d >= today && !excluded.has(dateKey(d))) out.push(new Date(d));
-    if (step) d.setDate(d.getDate() + step);
-    else if (b.recurrence === "monthly") d.setMonth(d.getMonth() + 1);
+    if (step) d = addDaysInstant(d, step);
+    else if (b.recurrence === "monthly") d = addMonthsInstant(d, 1);
     else break;
   }
   return out;
@@ -602,8 +636,7 @@ function filterByUpcomingRange(upcoming, range) {
   // +1 so "day" covers today AND tomorrow (not just the remainder of today) — otherwise a
   // shop closed today with bookings starting tomorrow would show zero results for "Next day".
   const days = (range === "week" ? 7 : range === "month" ? 30 : 1) + 1;
-  const cutoff = startOfToday();
-  cutoff.setDate(cutoff.getDate() + days);
+  const cutoff = addDaysInstant(startOfToday(), days);
   return upcoming.filter((b) => nextOccurrence(b) < cutoff);
 }
 function bookingDurationHours(b) {
@@ -627,7 +660,7 @@ function groomerLeaveOnDate(groomerId, dateStr) {
 function groomerOffOnDate(groomerId, dateStr) {
   const g = groomerById(groomerId);
   if (!g || !Array.isArray(g.workDays)) return false;
-  return !g.workDays.includes(new Date(dateStr + "T00:00:00").getDay());
+  return !g.workDays.includes(keyUTC(dateStr).getUTCDay());
 }
 // Light background tint for a booking row (kept subtle so black text stays easily readable
 // over it) — same alpha level already used for the status-completed/cancelled badge pills.
@@ -1190,7 +1223,7 @@ function homeUpcomingList(bookings, petId, opts = {}) {
       if (!from || !to || to < today) return;
       for (let day = from; day <= to; day = addDaysKey(day, 1)) {
         if (!byKey.has(day)) {
-          const g = { when: new Date(day + "T00:00:00"), items: [] };
+          const g = { when: keyToDate(day), items: [] };
           byKey.set(day, g);
           groups.push(g);
         }
@@ -1208,9 +1241,9 @@ function homeUpcomingList(bookings, petId, opts = {}) {
     return `
     <div class="home-day-group" data-date="${dk}" ${petId ? `data-pet-id="${petId}"` : ""} title="Click to add a booking on this day">
       <div class="home-day-label">
-        <div class="hd-dow">${esc(g.when.toLocaleDateString(undefined, { weekday: "short" }))}</div>
-        <div class="hd-num">${g.when.getDate()}</div>
-        <div class="hd-mon">${esc(g.when.toLocaleDateString(undefined, { month: "short" }))}</div>
+        <div class="hd-dow">${esc(g.when.toLocaleDateString(undefined, { weekday: "short", timeZone: SHOP_TZ }))}</div>
+        <div class="hd-num">${shopParts(g.when).getUTCDate()}</div>
+        <div class="hd-mon">${esc(g.when.toLocaleDateString(undefined, { month: "short", timeZone: SHOP_TZ }))}</div>
         <div class="hd-add">＋</div>
       </div>
       <div class="home-day-bookings">
@@ -1352,7 +1385,7 @@ function deletedPetsBinSection() {
 // excludedDates — not sent to the Bin, since it's just an exception on the still-live series)
 // or the whole series (to the Bin, restorable). occKey is the YYYY-MM-DD of the occurrence.
 function deleteRecurringModal(b, occKey) {
-  const occLabel = fmtDate(new Date(occKey + "T00:00:00"));
+  const occLabel = fmtDate(keyToDate(occKey));
   openModal(`
     <h2>Delete recurring booking</h2>
     <div class="muted" style="margin-bottom:16px">“${esc(b.petName)}” repeats ${esc(recurLabel(b).toLowerCase())}. What would you like to delete?</div>
@@ -1378,7 +1411,7 @@ function deleteRecurringModal(b, occKey) {
 // canSplit is false when the repeat pattern itself was changed — that can only mean the series.
 function askRecurringSaveScope(b, occKey, canSplit) {
   return new Promise((resolve) => {
-    const occLabel = fmtDate(new Date(occKey + "T00:00:00"));
+    const occLabel = fmtDate(keyToDate(occKey));
     const host = document.createElement("div");
     host.className = "scope-sheet";
     host.innerHTML = `
@@ -1412,16 +1445,16 @@ function askRecurringSaveScope(b, occKey, canSplit) {
 function confirmMessageOccurrences(b) {
   if (!b.recurrenceUntil) return [];
   const today = startOfToday();
-  const until = new Date(b.recurrenceUntil + "T23:59:59");
+  const until = keyEndOfDay(b.recurrenceUntil);
   const excluded = new Set(b.excludedDates || []);
   const step = recurStepDays(b);
   const out = [];
-  const d = new Date(b.start);
+  let d = new Date(b.start);
   for (let i = 0; i < 500; i++) {
     if (d > until) break;
     if (d >= today && !excluded.has(dateKey(d))) out.push(new Date(d));
-    if (step) d.setDate(d.getDate() + step);
-    else if (b.recurrence === "monthly") d.setMonth(d.getMonth() + 1);
+    if (step) d = addDaysInstant(d, step);
+    else if (b.recurrence === "monthly") d = addMonthsInstant(d, 1);
     else break;
   }
   return out;
@@ -1699,11 +1732,10 @@ function viewCalendarSettings() {
 const PX_PER_HOUR = 72; // taller blocks = more room for the pet name/services text to stay readable
 
 function sameMonth(dateStr, refDateStr) {
-  const a = new Date(dateStr + "T00:00:00"), b = new Date(refDateStr + "T00:00:00");
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
+  return dateStr.slice(0, 7) === refDateStr.slice(0, 7);
 }
 function visibleGroomers() { return state.groomers.filter((g) => !state.scheduleHiddenGroomers.includes(g.id)); }
-function nowMinutesToday() { const n = new Date(); return { dateStr: dateKey(n), min: n.getHours() * 60 + n.getMinutes() }; }
+function nowMinutesToday() { const n = new Date(), s = shopParts(n); return { dateStr: dateKey(n), min: s.getUTCHours() * 60 + s.getUTCMinutes() }; }
 
 function viewSchedule() {
   if (!state.scheduleDate) state.scheduleDate = todayKey();
@@ -1730,7 +1762,7 @@ function viewSchedule() {
         const inMonth = sameMonth(d, dateStr);
         const isToday = d === todayKey();
         const isSel = d === dateStr;
-        return `<button class="mini-day ${inMonth ? "" : "outside"} ${isToday ? "today" : ""} ${isSel ? "selected" : ""}" data-action="sched-jump" data-date="${d}">${new Date(d + "T00:00:00").getDate()}</button>`;
+        return `<button class="mini-day ${inMonth ? "" : "outside"} ${isToday ? "today" : ""} ${isSel ? "selected" : ""}" data-action="sched-jump" data-date="${d}">${keyUTC(d).getUTCDate()}</button>`;
       }).join("")}
     </div>
   </div>`;
@@ -1778,13 +1810,13 @@ function viewSchedule() {
   ${body}`;
 }
 
-function fmtMonthOnly(monthKey) { return new Date(monthKey + "-01T00:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }); }
+function fmtMonthOnly(monthKey) { return keyUTC(monthKey + "-01").toLocaleDateString(undefined, { month: "long", year: "numeric", timeZone: "UTC" }); }
 function addMonthsToMonthKey(monthKey, n) { return addMonthsKey(monthKey + "-01", n).slice(0, 7); }
 function lastDayOfMonthKey(monthKey) {
   const [y, m] = monthKey.split("-").map(Number);
-  return `${monthKey}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
+  return `${monthKey}-${pad2(new Date(Date.UTC(y, m, 0)).getUTCDate())}`;
 }
-function fmtDateFull(key) { return new Date(key + "T00:00:00").toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }); }
+function fmtDateFull(key) { return keyUTC(key).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }); }
 // "14 ก.ค. 2026" for a single day, "1 ก.ค. – 14 ก.ค. 2026" for a range. Kept fully spelled on
 // both ends (even within one month) so it's never ambiguous across month/year boundaries.
 function fmtFinancialRange(start, end) {
@@ -1829,7 +1861,7 @@ function financialMiniCal(rangeStart, rangeEnd) {
         const isToday = d === todayKey();
         const inRange = d >= rangeStart && d <= rangeEnd;
         const isEnd = d === rangeStart || d === rangeEnd;
-        return `<button class="mini-day ${inMonth ? "" : "outside"} ${isToday ? "today" : ""} ${inRange ? "in-range" : ""} ${isEnd ? "selected" : ""}" data-action="fin-pick-day" data-date="${d}">${new Date(d + "T00:00:00").getDate()}</button>`;
+        return `<button class="mini-day ${inMonth ? "" : "outside"} ${isToday ? "today" : ""} ${inRange ? "in-range" : ""} ${isEnd ? "selected" : ""}" data-action="fin-pick-day" data-date="${d}">${keyUTC(d).getUTCDate()}</button>`;
       }).join("")}
     </div>
     <div class="help" style="margin-top:8px">Click one day for a single day, or a second day to set a range.</div>
@@ -1992,7 +2024,7 @@ function scheduleBlockHtml(it, openMin, closeMin, color, occKey) {
 
 function scheduleBodyDay(dateStr) {
   const hours = getBusinessHours();
-  const dow = new Date(dateStr + "T00:00:00").getDay();
+  const dow = keyUTC(dateStr).getUTCDay();
   if ((hours.closedDays || []).includes(dow)) return emptyBlock("🌙", "Closed", `The shop is closed on ${DAY_NAMES[dow]}s.`, null, null);
   const groomers = visibleGroomers();
   if (!groomers.length) {
@@ -2084,7 +2116,7 @@ function scheduleBodyWeek(dateStr) {
   const now = nowMinutesToday();
 
   const cols = days.map((d) => {
-    const dow = new Date(d + "T00:00:00").getDay();
+    const dow = keyUTC(d).getUTCDay();
     const closed = (hours.closedDays || []).includes(dow);
     const items = closed ? [] : layoutLanesByGroomer(bookingsOnDate(d).filter((it) => !hiddenIds.includes(it.booking.groomerId)));
     const leaveNames = visibleGroomers().filter((g) => groomerLeaveOnDate(g.id, d)).map((g) => g.name);
@@ -2099,7 +2131,7 @@ function scheduleBodyWeek(dateStr) {
         ${cols.map((col) => `
           <div class="schedule-col-head week" data-action="goto-day" data-date="${col.dateStr}" style="cursor:pointer">
             <div class="day-name">${DAY_NAMES_SHORT[col.dow]}</div>
-            <span class="day-num ${col.dateStr === today ? "today" : ""}">${new Date(col.dateStr + "T00:00:00").getDate()}</span>
+            <span class="day-num ${col.dateStr === today ? "today" : ""}">${keyUTC(col.dateStr).getUTCDate()}</span>
             ${col.leaveNames.length ? `<div class="leave-chip" title="On leave">🌴 ${col.leaveNames.map(esc).join(", ")}</div>` : ""}
           </div>`).join("")}
       </div>
@@ -2121,21 +2153,21 @@ function scheduleBodyWeek(dateStr) {
 
 function scheduleBodyMonth(dateStr) {
   const hours = getBusinessHours();
-  const viewedMonth = new Date(dateStr + "T00:00:00").getMonth();
+  const viewedMonth = keyUTC(dateStr).getUTCMonth();
   const today = todayKey();
   const maxShow = 3;
   const hiddenIds = state.scheduleHiddenGroomers;
 
   const cells = monthGridDates(dateStr).map((d) => {
-    const dow = new Date(d + "T00:00:00").getDay();
+    const dow = keyUTC(d).getUTCDay();
     const closed = (hours.closedDays || []).includes(dow);
-    const inMonth = new Date(d + "T00:00:00").getMonth() === viewedMonth;
+    const inMonth = keyUTC(d).getUTCMonth() === viewedMonth;
     const items = bookingsOnDate(d).filter((it) => !hiddenIds.includes(it.booking.groomerId));
     const shown = items.slice(0, maxShow);
     const more = items.length - shown.length;
     return `
       <div class="month-cell ${inMonth ? "" : "outside"}" data-action="goto-day" data-date="${d}">
-        <div class="month-cell-date"><span class="day-num ${d === today ? "today" : ""}">${new Date(d + "T00:00:00").getDate()}</span>${closed ? " 🌙" : ""}</div>
+        <div class="month-cell-date"><span class="day-num ${d === today ? "today" : ""}">${keyUTC(d).getUTCDate()}</span>${closed ? " 🌙" : ""}</div>
         <div class="month-cell-items">
           ${shown.map((it) => `<div class="month-pill" style="background:${groomerColor(it.booking.groomerId)}">${esc(fmtMinutes(it.startMin))} ${esc(it.booking.petName)}</div>`).join("")}
           ${more > 0 ? `<div class="month-more">+${more} more</div>` : ""}
@@ -2772,7 +2804,7 @@ function bookingModal(booking, prefillPet, slotPrefill, occurrenceKey, confirmOn
   function updateWorkdayWarning() {
     const el = $("#b-workday-warn"); if (!el) return;
     if (bookingGroomerOff()) {
-      const dow = new Date($("#b-start").value).getDay();
+      const dow = keyUTC($("#b-start").value.slice(0, 10)).getUTCDay();
       el.innerHTML = `📅 <strong>${esc(groomerName($("#b-groomer").value))}</strong> doesn't usually work on ${DAY_NAMES[dow]}s.`;
       el.hidden = false;
     } else { el.hidden = true; el.textContent = ""; }
@@ -2811,7 +2843,7 @@ function bookingModal(booking, prefillPet, slotPrefill, occurrenceKey, confirmOn
     const leave = bookingLeave();
     if (leave && !confirm(`${groomerName(groomerId)} is on leave on ${fmtDate(new Date($("#b-start").value))}${leave.note ? ` — ${leave.note}` : ""}.\n\nBook anyway?`)) return;
     // Same soft warning if they don't normally work that weekday — staff can still override.
-    if (bookingGroomerOff() && !confirm(`${groomerName(groomerId)} doesn't usually work on ${DAY_NAMES[new Date($("#b-start").value).getDay()]}s.\n\nBook anyway?`)) return;
+    if (bookingGroomerOff() && !confirm(`${groomerName(groomerId)} doesn't usually work on ${DAY_NAMES[keyUTC($("#b-start").value.slice(0, 10)).getUTCDay()]}s.\n\nBook anyway?`)) return;
 
     // Editing an occurrence of a recurring series: ask whether the change is for just that day
     // or the whole series. Asked here, before ANY write below, so cancelling really does leave
@@ -2977,10 +3009,16 @@ async function reconcileCalendar() {
   }
 }
 function toLocalInput(d) {
-  const dt = new Date(d); const p = (n) => String(n).padStart(2, "0");
-  return `${dt.getFullYear()}-${p(dt.getMonth() + 1)}-${p(dt.getDate())}T${p(dt.getHours())}:${p(dt.getMinutes())}`;
+  const x = shopParts(d);
+  return `${x.getUTCFullYear()}-${pad2(x.getUTCMonth() + 1)}-${pad2(x.getUTCDate())}T${pad2(x.getUTCHours())}:${pad2(x.getUTCMinutes())}`;
 }
-function fromLocalInput(v) { return new Date(v).toISOString(); }
+// What the user typed is always read as Thai time, wherever the phone happens to be.
+function fromLocalInput(v) {
+  const [date, time] = v.split("T");
+  const [y, m, d] = date.split("-").map(Number);
+  const [h, mi] = time.split(":").map(Number);
+  return shopInstant(y, m - 1, d, h, mi).toISOString();
+}
 
 /* ---------- Calendar import (one-time: pulls existing Calendar events into bookings) ---------
    Normal sync only ever writes to Calendar, never reads it back — this is the one place the
@@ -3069,7 +3107,7 @@ function calendarImportModal() {
       <button class="btn primary" id="imp-fetch">Fetch events</button>
     </div>`);
 
-  const isValidDateStr = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && dateKey(new Date(s + "T00:00:00")) === s;
+  const isValidDateStr = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(keyUTC(s)) && utcKey(keyUTC(s)) === s;
 
   $("#imp-fetch").onclick = async () => {
     const fromV = $("#imp-from").value.trim(), toV = $("#imp-to").value.trim();
@@ -3080,8 +3118,8 @@ function calendarImportModal() {
     try {
       if (!GCal.isConnected()) await GCal.connect(); // must run inside this click handler for the popup
       const events = await GCal.listEvents(calendarId, {
-        timeMin: new Date(fromV + "T00:00:00").toISOString(),
-        timeMax: new Date(toV + "T23:59:59").toISOString(),
+        timeMin: keyToDate(fromV).toISOString(),
+        timeMax: keyEndOfDay(toV).toISOString(),
       });
       const known = alreadyImportedEventIds();
       const candidates = events
@@ -3408,8 +3446,7 @@ function bindView() {
       const offsetY = e.clientY - el.getBoundingClientRect().top;
       const rawMin = openMin + (offsetY / PX_PER_HOUR) * 60;
       const snappedMin = Math.max(openMin, Math.min(closeMin, Math.floor(rawMin / 60) * 60));
-      const start = new Date(`${el.dataset.date}T00:00:00`);
-      start.setHours(Math.floor(snappedMin / 60), snappedMin % 60, 0, 0);
+      const start = keyAtMinute(el.dataset.date, snappedMin);
       bookingModal(null, null, { start, groomerId: el.dataset.groomerId || null });
     };
   });
@@ -3420,8 +3457,7 @@ function bindView() {
     el.onclick = (e) => {
       if (e.target.closest(".home-booking") || !el.dataset.date) return;
       const min = firstFreeMinuteOnDay(el.dataset.date);
-      const start = new Date(`${el.dataset.date}T00:00:00`);
-      start.setHours(Math.floor(min / 60), min % 60, 0, 0);
+      const start = keyAtMinute(el.dataset.date, min);
       const prefillPet = el.dataset.petId ? state.pets.find((p) => p.id === el.dataset.petId) : null;
       bookingModal(null, prefillPet, { start });
     };
