@@ -170,7 +170,7 @@ const GROOMER_COLORS = [
 ];
 
 /* ---------- state ---------- */
-const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], deletedBookings: [], deletedPets: [], leaves: [], scheduleDate: "", scheduleHiddenGroomers: [], scheduleMiniCalOpen: false, financialStart: "", financialEnd: "", financialCalMonth: "", financialCalOpen: false, upcomingRange: "day", bookingsOpen: { completed: false, cancelled: false, bin: false }, petsBinOpen: false, search: { name: "", breed: "" }, petsQuery: "" };
+const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], deletedBookings: [], deletedPets: [], leaves: [], scheduleDate: "", scheduleHiddenGroomers: [], scheduleMiniCalOpen: false, financialStart: "", financialEnd: "", financialCalMonth: "", financialCalOpen: false, upcomingRange: "day", bookingsOpen: { completed: false, cancelled: false, bin: false }, petsBinOpen: false, search: { name: "", breed: "" }, petsQuery: "", activityOlder: [], activityAllLoaded: false };
 const getCalendarId = () => (state.settings.find((s) => s.id === "calendar") || {}).calendarId || "";
 const getCustomBreeds = () => (state.settings.find((s) => s.id === "breeds") || {}).list || [];
 
@@ -183,6 +183,7 @@ const getCustomBreeds = () => (state.settings.find((s) => s.id === "breeds") || 
    holds even against a direct API call, not just a hidden button. */
 const ALL_SECTIONS = [
   { key: "home", label: "Home" },
+  { key: "notifications", label: "Notifications" },
   { key: "pets", label: "Pets" },
   { key: "bookings", label: "Bookings" },
   { key: "schedule", label: "Schedule" },
@@ -194,7 +195,7 @@ const ALL_SECTIONS = [
 // full stop, regardless of what a role's section list contains.
 const DEFAULT_ROLE_SECTIONS = {
   admin: ALL_SECTIONS.map((s) => s.key),
-  groomer: ["home", "pets", "bookings", "schedule"],
+  groomer: ["home", "notifications", "pets", "bookings", "schedule"],
 };
 const isOwnerSession = () => DB.currentEmail() === SHOP_LOGIN_EMAIL;
 const currentAdminDoc = () => state.admins.find((a) => a.uid === DB.currentUid());
@@ -218,7 +219,11 @@ function allowedSections() {
   if (isOwnerSession()) return [...ALL_SECTIONS.map((s) => s.key), "admins"];
   const cfg = roleSectionsConfig();
   const sections = cfg[currentRole()] || [];
-  return sections.includes("home") ? sections : ["home", ...sections];
+  // Home and Notifications are always on, like Home always has been: Notifications is the same
+  // shop feed the Home card already shows everyone, and any roles config saved before that tab
+  // existed can't list it — without this it would silently stay hidden from everyone but Owner.
+  const alwaysOn = ["home", "notifications"];
+  return [...alwaysOn, ...sections.filter((s) => !alwaysOn.includes(s))];
 }
 // "pet" (a single pet's detail page) isn't its own nav section — it's gated by "pets".
 function sectionKeyForView(view) { return view === "pet" ? "pets" : view; }
@@ -687,12 +692,14 @@ function findMatchingPets(query, limit = 6) {
 // it in place, once. Naturally becomes a no-op forever after the first pass.
 async function migratePetTimesToHours() {
   for (const p of state.pets) {
-    const t = p.times || {};
+    const t = { ...(p.times || {}) };
     let changed = false;
     ["shower", "clipping", "styling"].forEach((k) => {
       if (t[k] != null && t[k] > 12) { t[k] = Math.round((t[k] / 60) * 4) / 4; changed = true; }
     });
-    if (changed) { await DB.put("pets", p); upsertLocal("pets", p); }
+    // DB.patch, not DB.put — a background rewrite must never carry this device's copy of every
+    // other field along with it.
+    if (changed) { await DB.patch("pets", p.id, { times: t }).catch(() => {}); upsertLocal("pets", { ...p, times: t }); }
   }
 }
 
@@ -705,9 +712,10 @@ async function migrateShowerLabelToBasic() {
     const services = b.services.map((s) => (s === "Shower" ? "Basic" : s));
     const serviceHours = {};
     Object.keys(b.serviceHours || {}).forEach((k) => { serviceHours[k === "Shower" ? "Basic" : k] = b.serviceHours[k]; });
-    const rec = { ...b, services, serviceHours, calendarDirty: true };
-    await DB.put("bookings", rec);
-    upsertLocal("bookings", rec);
+    // DB.patch, not DB.put — see migratePetTimesToHours above.
+    const fields = { services, serviceHours, calendarDirty: true };
+    await DB.patch("bookings", b.id, fields).catch(() => {});
+    upsertLocal("bookings", { ...b, ...fields });
   }
 }
 
@@ -784,6 +792,7 @@ function render() {
   });
   const v = $("#view");
   if (state.view === "home") v.innerHTML = viewHome();
+  else if (state.view === "notifications") v.innerHTML = viewNotifications();
   else if (state.view === "pets") v.innerHTML = viewPets();
   else if (state.view === "pet") v.innerHTML = viewPetDetail();
   else if (state.view === "bookings") v.innerHTML = viewBookings();
@@ -867,7 +876,7 @@ function viewHome() {
         <div class="stack" style="gap:2px">
           ${recent.length ? recent.map(activityRow).join("") : emptyInline("No recent activity yet.")}
         </div>
-        ${state.activity.length > 8 ? `<button class="link" data-action="activity-history" style="margin-top:10px">View all history →</button>` : ""}
+        ${state.activity.length > 8 ? `<button class="link" data-nav="notifications" style="margin-top:10px">View all history →</button>` : ""}
       </div>
       <div class="card pad">
         <h3 class="section-title">Quick actions</h3>
@@ -1100,46 +1109,40 @@ function activityRow(a) {
   </div>`;
 }
 
-// Full activity history with a "Load more" button. Deliberately NOT a live listener: it seeds
-// from the newest ~50 already in memory (free — those are what the Home feed's listener holds),
-// then each "Load more" does a one-time paginated DB.getPage() for the next older batch. So
-// older history is billed only when someone actually opens this and scrolls back — it never
-// re-reads on every app open, which is the whole point of capping the live activity listener.
-function activityHistoryModal() {
-  const BATCH = 50;
-  let items = [...state.activity].sort((a, b) => b.at - a.at);
-  let done = false; // true once a fetched page came back short — nothing older left
-  function paint() {
-    openModal(`
-      <h2>Activity history</h2>
-      <div class="muted" style="margin-bottom:12px">Most recent first.</div>
-      <div class="stack" style="gap:2px; max-height:60vh; overflow:auto">
-        ${items.length ? items.map(activityRow).join("") : emptyInline("No activity yet.")}
-      </div>
-      <div class="row" style="justify-content:center; margin-top:14px">
-        ${done
-          ? `<span class="faint" style="font-size:12px">— That's the whole history —</span>`
-          : `<button class="btn" id="act-more">Load more</button>`}
-        <button class="btn" data-close-modal style="margin-left:8px">Close</button>
-      </div>`);
-    const moreBtn = $("#act-more");
-    if (moreBtn) moreBtn.onclick = async () => {
-      moreBtn.disabled = true; moreBtn.textContent = "Loading…";
-      try {
-        const oldestAt = items.length ? items[items.length - 1].at : null;
-        const page = await DB.getPage("activity", { afterAt: oldestAt, limit: BATCH });
-        if (page.length < BATCH) done = true;
-        const seen = new Set(items.map((x) => x.id)); // guard the page boundary against dupes
-        items = items.concat(page.filter((x) => !seen.has(x.id)));
-        paint();
-      } catch (err) {
-        console.error("Load more activity failed", err);
-        moreBtn.disabled = false; moreBtn.textContent = "Load more";
-        toast("Couldn't load older activity — try again.");
-      }
-    };
-  }
-  paint();
+// Newest-first activity, merging the live listener's newest ~50 (state.activity) with any older
+// batches "Load more" has pulled in (state.activityOlder). Deduped on id, since a page boundary
+// can hand back a row the live listener already holds.
+const ACTIVITY_PAGE = 50;
+function activityFeed() {
+  const seen = new Set();
+  return [...state.activity, ...state.activityOlder]
+    .filter((a) => { if (seen.has(a.id)) return false; seen.add(a.id); return true; })
+    .sort((a, b) => b.at - a.at);
+}
+
+/* ---------- NOTIFICATIONS ---------- */
+// Its own page rather than only the Home card, which staff had to scroll past everything else to
+// reach. Older history stays deliberately NOT live-subscribed: the feed seeds from the newest ~50
+// the Home listener already holds (free), and each "Load more" is a one-time paginated read. That
+// keeps the cost of a long history on whoever actually scrolls back, instead of charging every
+// device for the whole log on every app open — the reason the live listener is capped at all.
+function viewNotifications() {
+  const items = activityFeed();
+  return `
+  <div class="page-head">
+    <h1>Notifications <span class="faint" style="font-weight:600">(${items.length})</span></h1>
+  </div>
+  <div class="card pad">
+    <div class="muted" style="margin-bottom:10px">Everything that's happened in the shop, newest first.</div>
+    <div class="stack" style="gap:2px">
+      ${items.length ? items.map(activityRow).join("") : emptyInline("No activity yet.")}
+    </div>
+    <div class="row" style="justify-content:center; margin-top:16px">
+      ${state.activityAllLoaded
+        ? `<span class="faint" style="font-size:12px">— That's the whole history —</span>`
+        : `<button class="btn" data-action="load-older-activity">Load more</button>`}
+    </div>
+  </div>`;
 }
 
 function bookingRow(b, opts = {}) {
@@ -2989,19 +2992,26 @@ async function reconcileCalendar() {
     }
     const pending = state.bookings.filter((b) => b.calendarDirty || !b.calendarEventId);
     for (const b of pending) {
+      let synced;
       try {
         const eventId = await GCal.syncBooking(calendarId, b, groomerById(b.groomerId));
-        b.calendarEventId = eventId;
-        b.calendarDirty = false;
-        b.calendarSyncError = null;
-        await DB.put("bookings", b);
-        upsertLocal("bookings", b);
+        synced = { calendarEventId: eventId, calendarDirty: false, calendarSyncError: null };
       } catch (err) {
         console.error("Booking sync failed", b, err);
-        b.calendarSyncError = err.message || String(err);
-        await DB.put("bookings", b).catch(() => {});
-        upsertLocal("bookings", b);
+        synced = { calendarSyncError: err.message || String(err) };
       }
+      // DB.patch, never DB.put: nobody asked for this write, so it must only ever touch the
+      // three fields it owns. Writing the whole record from this device's copy is what rolled
+      // other people's edits back — see DB.patch in db.js.
+      try {
+        await DB.patch("bookings", b.id, synced);
+      } catch (err) {
+        if (err && err.code === "not-found") { removeLocal("bookings", b.id); continue; } // deleted elsewhere
+        console.error("Couldn't record sync state", b, err);
+        continue;
+      }
+      Object.assign(b, synced);
+      upsertLocal("bookings", b);
     }
   } finally {
     reconciling = false;
@@ -3698,7 +3708,20 @@ async function handleAction(action, data) {
       render();
     } break;
     case "set-upcoming-range": state.upcomingRange = data.value; render(); break;
-    case "activity-history": activityHistoryModal(); break;
+    case "load-older-activity": {
+      const items = activityFeed();
+      const oldestAt = items.length ? items[items.length - 1].at : null;
+      try {
+        const page = await DB.getPage("activity", { afterAt: oldestAt, limit: ACTIVITY_PAGE });
+        if (page.length < ACTIVITY_PAGE) state.activityAllLoaded = true; // a short page = nothing older left
+        state.activityOlder = [...state.activityOlder, ...page];
+        render();
+      } catch (err) {
+        console.error("Load more activity failed", err);
+        toast("Couldn't load older activity — try again.");
+      }
+      break;
+    }
     case "clear-search": state.search = { name: "", breed: "" }; render(); break;
     case "clear-pets-search": state.petsQuery = ""; render(); break;
     case "go-pets": go("pets"); break;
@@ -3752,6 +3775,17 @@ document.addEventListener("click", (e) => {
 const COLLECTIONS = ["pets", "groomers", "bookings", "admins", "settings", "activity", "calendarTombstones", "leaves"];
 let watchers = [];
 
+// One-off data rewrites, run once per collection and only once that collection has arrived from
+// the SERVER. They used to run straight after login, which — once offline persistence landed —
+// meant they could fire against this device's disk cache and write months-old copies back.
+const migrationsRun = new Set();
+function runBackgroundMigrations(name) {
+  if (migrationsRun.has(name)) return;
+  migrationsRun.add(name);
+  if (name === "pets") migratePetTimesToHours();
+  if (name === "bookings") migrateShowerLabelToBasic();
+}
+
 function startWatchers() {
   // Tear down any existing listeners first. Without this, if onAuthChange ever fired more than
   // once with a user in a session, each call stacked a second full set of onSnapshot listeners
@@ -3759,17 +3793,22 @@ function startWatchers() {
   // gets billed for every change, silently multiplying Firestore reads. Idempotent now.
   stopWatchers();
   watchers = COLLECTIONS.map((name) =>
-    DB.watch(name, async (changed) => {
+    DB.watch(name, async (changed, meta) => {
       state[changed] = await DB.getAll(changed);
       scheduleRender(); // coalesce the boot snapshot burst into one render — see scheduleRender()
-      // Someone else's change (or this device's own) may need syncing to Calendar —
-      // reconcileCalendar() no-ops instantly if this device isn't connected.
-      if (changed === "bookings" || changed === "calendarTombstones") reconcileCalendar();
       // The very first read right after login can race ahead of Firestore's live data
       // (Promise.all below just snapshots the cache, it doesn't wait for it) — so the
       // banner's initial check might see an empty settings array and miss the Calendar
       // ID. Re-check every time settings actually arrives/changes, not just once.
       if (changed === "settings") updateGcalBanner();
+      // Rendering a cached snapshot is the whole point of offline persistence, but WRITING off
+      // one is not: until the server has answered, state still holds whatever this device had
+      // on disk, and anything that writes it back would roll other people's edits over.
+      if (meta.fromCache) return;
+      runBackgroundMigrations(changed);
+      // Someone else's change (or this device's own) may need syncing to Calendar —
+      // reconcileCalendar() no-ops instantly if this device isn't connected.
+      if (changed === "bookings" || changed === "calendarTombstones") reconcileCalendar();
     })
   );
 }
@@ -3835,8 +3874,8 @@ DB.onAuthChange(async (user) => {
     // bookings that piled up unsynced; if the saved token has expired, the Connect banner shows.
     GCal.resume();
     render();
-    migratePetTimesToHours();
-    migrateShowerLabelToBasic();
+    // The migrations deliberately aren't called here any more — they run from the watcher, once
+    // each collection has arrived from the server. See runBackgroundMigrations().
     updateGcalBanner();
   } catch (err) {
     // Most likely a revoked admin: their login still works, but Firestore rules deny them.

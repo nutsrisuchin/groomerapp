@@ -93,6 +93,18 @@
   api.put = (name, val) => col(name).doc(val.id).set(val).then(() => val);
   api.del = (name, id) => col(name).doc(id).delete();
 
+  // Merges a few named fields into an existing doc, leaving every other field alone — use this
+  // for any write the user didn't explicitly ask for (background sync, migrations).
+  //
+  // put() replaces the WHOLE document from this device's in-memory copy, so a background write
+  // built on a stale copy silently rolls back every field another device changed in the
+  // meantime, and re-creates a doc someone else deleted. Offline persistence made that far more
+  // likely, because the first snapshot after opening the app now comes from this device's own
+  // disk cache rather than the server. patch() can do neither: untouched fields keep whatever
+  // the server has, and update() rejects with "not-found" on a deleted doc instead of reviving
+  // it — callers should treat that rejection as "fine, it's gone".
+  api.patch = (name, id, fields) => col(name).doc(id).update(fields);
+
   // Collections we only ever need the most-recent slice of, kept live. The activity/notifications
   // log grows one doc per action forever, yet the UI only shows the newest handful — subscribing
   // to the whole collection meant re-reading the ENTIRE history on every app open, which was the
@@ -102,14 +114,23 @@
   // needed — ordering on a single field (`at`) is auto-indexed.
   const WATCH_LIMITS = { activity: 50 };
 
-  // Subscribes to a collection; cb(name) fires on every change (including this device's own writes).
-  // Returns an unsubscribe function.
+  // Subscribes to a collection; cb(name, meta) fires on every change (including this device's
+  // own writes). Returns an unsubscribe function.
+  //
+  // `meta.fromCache` is true while the data came from this device's disk cache rather than the
+  // server — which, with offline persistence on, is always the case for the first snapshot after
+  // opening the app. It's fine to render that (it's the whole point: the UI paints instantly),
+  // but anything that WRITES off the back of a snapshot must wait for fromCache to be false, or
+  // it will push this device's stale copy over newer data.
   api.watch = function (name, cb) {
     let ref = col(name);
     const limit = WATCH_LIMITS[name];
     if (limit) ref = ref.orderBy("at", "desc").limit(limit);
     return ref.onSnapshot(
-      (snap) => { cache[name] = snap.docs.map((d) => d.data()); cb(name); },
+      (snap) => {
+        cache[name] = snap.docs.map((d) => d.data());
+        cb(name, { fromCache: snap.metadata.fromCache, hasPendingWrites: snap.metadata.hasPendingWrites });
+      },
       (err) => console.error("Firestore listen failed for", name, err)
     );
   };

@@ -27,15 +27,36 @@ Deployed on GitHub Pages, auto-deploys on push to `master`.
 - Each Firestore collection gets a live `onSnapshot` listener (wrapped as `DB.watch(name, cb)`
   in `db.js`) that replaces the relevant array in `state` and calls `render()`. This means
   every connected device sees every other device's changes without polling.
-- **Watch out for unbounded collections read in full.** Because each listener re-reads its
-  *entire* collection on every app open (no offline persistence enabled), a collection that
-  grows forever makes every open progressively more expensive — this is what blew past
-  Firestore's 50k-reads/day free limit, driven mostly by the ever-growing `activity` log even
-  though the UI only shows the newest 8. `DB.watch` therefore caps such collections to the
-  newest N via `WATCH_LIMITS` in `db.js` (`activity: 50`, ordered by `at desc`); older rows
-  stay in the DB but aren't downloaded. Add any future append-only/log-style collection to
-  `WATCH_LIMITS` rather than subscribing to the whole thing. (The deeper, not-yet-done lever is
-  enabling IndexedDB persistence so reopens sync deltas instead of re-reading everything.)
+- **Watch out for unbounded collections read in full.** A collection that grows forever makes
+  every open progressively more expensive — this is what blew past Firestore's 50k-reads/day
+  free limit, driven mostly by the ever-growing `activity` log even though the UI only shows the
+  newest 8. `DB.watch` therefore caps such collections to the newest N via `WATCH_LIMITS` in
+  `db.js` (`activity: 50`, ordered by `at desc`); older rows stay in the DB but aren't
+  downloaded. Add any future append-only/log-style collection to `WATCH_LIMITS` rather than
+  subscribing to the whole thing.
+- **IndexedDB persistence is ON** (`enablePersistence` in `db.js`), so reopens paint from disk
+  and only sync deltas — it's what fixed ~30s app opens. **It also makes the first snapshot after
+  every app open come from this device's cache, not the server**, which is a trap: see the
+  write-safety rules below. The remaining cost is the *first* load on a device, dominated by pet
+  photos stored as base64 data URLs inside their own `pets` documents (309 pets ≈ 20–40MB); the
+  not-yet-done fix is a small thumbnail on the record with the full image fetched on demand.
+- **`DB.put` replaces the WHOLE document; `DB.patch` merges named fields. Any write the user
+  didn't explicitly ask for must use `patch`.** This caused a real data-loss incident: bookings
+  silently reverted to older values across the shop for weeks. `reconcileCalendar()` fires on
+  every bookings snapshot and used `put`, so it rewrote the entire record from this device's
+  in-memory copy — and once persistence landed, that copy was the *disk cache* for the first
+  moment after every app open. Every device with Calendar connected quietly pushed stale data
+  over everyone else's edits, with nothing in the activity log (background writes don't log).
+  `put` would also resurrect a doc another device had deleted; `patch` rejects `not-found`
+  instead, which callers should treat as "fine, it's gone".
+- **Never write off a snapshot while `meta.fromCache` is true.** `DB.watch`'s callback gets
+  `(name, meta)`; rendering cached data is the point of persistence, but writing it back pushes
+  this device's stale copy over newer data. Background migrations are gated on this too — they
+  run from the watcher via `runBackgroundMigrations()`, once per collection, after real server
+  data arrives, not straight after login as they used to.
+- User-initiated saves (the booking/pet forms) are still whole-document `put`s, which is correct
+  — the user is looking at the full record — but note the same staleness window exists in theory
+  if someone opens a form in the first instant after launch, before the server snapshot lands.
 - Writes are optimistic: `upsertLocal(collection, record)` / `removeLocal(collection, id)`
   update `state` immediately so the UI reflects a change before Firestore's own snapshot
   round-trip confirms it — the confirming snapshot then just no-ops over the same data.

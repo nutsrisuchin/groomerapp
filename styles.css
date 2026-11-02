@@ -89,7 +89,9 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 .login-logo{height:110px; margin:0 auto}
 .brand-name{font-weight:800; font-size:18px; line-height:1; display:flex; flex-direction:column; gap:2px}
 .brand-name small{font-weight:600; font-size:11px; color:var(--ink-faint); letter-spacing:.06em; text-transform:uppercase}
-.topnav{display:flex; gap:4px; background:var(--surface-2); padding:4px; border-radius:12px}
+/* flex-wrap so the row drops to a second line instead of overflowing the header — with 9 tabs
+   it no longer fits across a narrow desktop window (the phone dropdown only starts at 820px). */
+.topnav{display:flex; flex-wrap:wrap; gap:4px; background:var(--surface-2); padding:4px; border-radius:12px}
 .nav-btn{
   border:0; background:transparent; color:var(--ink-soft);
   padding:8px 16px; border-radius:9px; font-weight:600; font-size:14px;
