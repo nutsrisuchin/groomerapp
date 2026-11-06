@@ -170,7 +170,7 @@ const GROOMER_COLORS = [
 ];
 
 /* ---------- state ---------- */
-const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], deletedBookings: [], deletedPets: [], leaves: [], scheduleDate: "", scheduleHiddenGroomers: [], scheduleMiniCalOpen: false, financialStart: "", financialEnd: "", financialCalMonth: "", financialCalOpen: false, upcomingRange: "day", bookingsOpen: { completed: false, cancelled: false, bin: false }, petsBinOpen: false, search: { name: "", breed: "" }, petsQuery: "", activityOlder: [], activityAllLoaded: false };
+const state = { view: "home", petId: null, pets: [], groomers: [], bookings: [], admins: [], settings: [], activity: [], calendarTombstones: [], deletedBookings: [], deletedPets: [], leaves: [], scheduleDate: "", scheduleHiddenGroomers: [], scheduleMiniCalOpen: false, financialStart: "", financialEnd: "", financialCalMonth: "", financialCalOpen: false, upcomingRange: "day", bookingsOpen: { completed: false, cancelled: false, bin: false }, petsBinOpen: false, search: { name: "", breed: "" }, petsQuery: "", activityOlder: [], activityAllLoaded: false, auditOpen: false, auditFrom: "", auditTo: "", auditRows: null, auditScanned: 0, auditUnparsed: 0, auditReachedStart: true, auditScanning: false, auditIncludePast: false };
 const getCalendarId = () => (state.settings.find((s) => s.id === "calendar") || {}).calendarId || "";
 const getCustomBreeds = () => (state.settings.find((s) => s.id === "breeds") || {}).list || [];
 
@@ -1120,6 +1120,324 @@ function activityFeed() {
     .sort((a, b) => b.at - a.at);
 }
 
+/* ---------- Missing-booking audit (recovery for the 17 Sep – 2 Nov 2026 overwrite bug) ----------
+   For those weeks a background Calendar-sync write rewrote WHOLE booking documents from whichever
+   device happened to run it, using that device's in-memory copy — which, once offline persistence
+   landed, was its disk cache for the first moment after every app open. So one device could
+   silently roll another's edits back, or overwrite a booking out of existence. That's fixed (see
+   DB.patch in db.js plus the fromCache guard in startWatchers), but bookings lost during the
+   window are still gone, and the activity log is the only surviving record of them: a
+   created/updated entry embeds the booking's date and time in its summary text, e.g.
+     "Miso (Maltese) with Mint — Thu, 28 Jan 17:00"
+   This tool replays the log across the window and flags every logged date/time that no booking
+   covers today. It is deliberately read-only — a flagged row opens a PREFILLED New booking form
+   for a human to complete and save, because the log never recorded services, hours, price or
+   notes. There isn't enough information to recreate a booking automatically, and a silently
+   guessed one would be worse than none. Known blind spots, shown in the UI rather than hidden:
+     - a booking whose services/price/notes were reverted but whose date and time survived
+     - a booking created BEFORE the window and overwritten without anyone editing it during it
+     - occurrences of a series other than its first (the log only ever records rec.start)
+*/
+const AUDIT_DEFAULT_FROM = "2026-09-17"; // offline persistence shipped (0ecd979) — bug starts here
+const AUDIT_DEFAULT_TO = "2026-11-03";   // the DB.patch fix shipped (80c841e) — bug ends here
+const AUDIT_SCAN_PAGE = 200;
+
+// Month and weekday names in every form the shop's phones actually produce. fmtDate/fmtTime pass
+// `undefined` as the locale — i.e. the LOGGING device's locale — so one collection can hold
+// "Thu, Jan 28", "Thu, 28 Jan" and "พฤ. 28 ม.ค." side by side. Order matters: Sunday ("อา.") is
+// tested before Tuesday ("อ.") so the shorter token can't swallow the longer one.
+const AUDIT_MONTH_TOKENS = [
+  ["january", "jan", "ม.ค."], ["february", "feb", "ก.พ."], ["march", "mar", "มี.ค."],
+  ["april", "apr", "เม.ย."], ["may", "พ.ค."], ["june", "jun", "มิ.ย."],
+  ["july", "jul", "ก.ค."], ["august", "aug", "ส.ค."], ["september", "sept", "sep", "ก.ย."],
+  ["october", "oct", "ต.ค."], ["november", "nov", "พ.ย."], ["december", "dec", "ธ.ค."],
+];
+// Thai gets its spelled-out weekday too: th-TH's "short" weekday is "พฤหัส", not the "พฤ." an
+// abbreviation list would suggest, and without it every Thai-phone row would lose the weekday —
+// the only thing that pins down the year.
+const AUDIT_WEEKDAY_TOKENS = [
+  ["sunday", "sun", "อาทิตย์", "อา."], ["monday", "mon", "จันทร์", "จ."],
+  ["tuesday", "tue", "อังคาร", "อ."], ["wednesday", "wed", "พุธ", "พ."],
+  ["thursday", "thu", "พฤหัสบดี", "พฤหัส", "พฤ."], ["friday", "fri", "ศุกร์", "ศ."],
+  ["saturday", "sat", "เสาร์", "ส."],
+];
+
+// One activity row -> { petName, breed, groomerName, key, min, guessedYear } or null when the
+// summary carries no date at all (deletes, cancellations, imports) or can't be read confidently.
+//
+// The hard part is the YEAR, which fmtDate never writes. The weekday pins it down — 28 January is
+// a Thursday in 2027 but a Friday in 2028 — so we generate every candidate year around the date
+// the entry was logged, keep the ones whose weekday matches, and prefer the first one at or after
+// the log date. If the weekday can't be read, or more than one candidate survives, the row is
+// flagged `guessedYear` and says so on screen rather than quietly picking one.
+function parseAuditEntry(a) {
+  const summary = String(a.summary || "");
+  const sep = summary.indexOf(" — ");
+  if (sep < 0) return null;
+  const head = summary.slice(0, sep);
+  const tail = summary.slice(sep + 3).trim();
+
+  // Accept "17:00", "17.00" (some locales use a dot) and "5:00 PM".
+  const times = [...tail.matchAll(/(\d{1,2})[:.](\d{2})(?:\s*([AaPp])\.?[Mm]\.?)?/g)];
+  if (!times.length) return null;
+  const t = times[times.length - 1];
+  let hh = Number(t[1]);
+  const mm = Number(t[2]);
+  const mer = t[3] ? t[3].toLowerCase() : null;
+  if (mer === "p" && hh < 12) hh += 12;
+  if (mer === "a" && hh === 12) hh = 0;
+  if (hh > 23 || mm > 59) return null;
+  const min = hh * 60 + mm;
+
+  const datePart = (tail.slice(0, t.index) + " " + tail.slice(t.index + t[0].length)).trim();
+  const lower = datePart.toLowerCase();
+  let month = 0;
+  for (let i = 0; i < AUDIT_MONTH_TOKENS.length; i++) {
+    if (AUDIT_MONTH_TOKENS[i].some((tok) => lower.includes(tok))) { month = i + 1; break; }
+  }
+  const dayM = datePart.match(/(\d{1,2})/);
+  if (!month || !dayM) return null;
+  const day = Number(dayM[1]);
+  if (day < 1 || day > 31) return null;
+
+  // Only look for the weekday BEFORE the day number — every locale here puts it first, and
+  // scanning the whole string would match "ส." (Sat) inside "ส.ค." (Aug).
+  const beforeDay = lower.slice(0, dayM.index);
+  let wd = -1;
+  for (let i = 0; i < AUDIT_WEEKDAY_TOKENS.length; i++) {
+    if (AUDIT_WEEKDAY_TOKENS[i].some((tok) => beforeDay.includes(tok))) { wd = i; break; }
+  }
+
+  const atKey = dateKey(new Date(a.at));
+  const atYear = Number(atKey.slice(0, 4));
+  const cands = [];
+  for (let y = atYear - 1; y <= atYear + 3; y++) {
+    const key = `${y}-${pad2(month)}-${pad2(day)}`;
+    const probe = keyUTC(key);
+    if (probe.getUTCDate() !== day || probe.getUTCMonth() + 1 !== month) continue; // 29 Feb, non-leap
+    cands.push(key);
+  }
+  if (!cands.length) return null;
+  const byWeekday = wd >= 0 ? cands.filter((k) => keyUTC(k).getUTCDay() === wd) : [];
+  const pool = byWeekday.length ? byWeekday : cands;
+  const guessedYear = byWeekday.length !== 1;
+  const key = pool.find((k) => k >= atKey) || pool.filter((k) => k < atKey).pop() || null;
+  if (!key) return null;
+
+  const withIdx = head.lastIndexOf(" with ");
+  const left = withIdx >= 0 ? head.slice(0, withIdx) : head;
+  const grm = withIdx >= 0 ? head.slice(withIdx + 6).trim() : "";
+  const breedM = left.match(/^(.*?)\s*\(([^)]*)\)\s*$/);
+  const petName = (breedM ? breedM[1] : left).trim();
+  if (!petName) return null;
+
+  return {
+    id: a.id, at: a.at, actorName: a.actorName || "", action: a.action,
+    petName, breed: breedM ? breedM[2].trim() : "", groomerName: grm,
+    key, min, guessedYear,
+  };
+}
+
+// Pages the activity log back across the window with one-time reads (the live listener only ever
+// holds the newest 50 — see WATCH_LIMITS) and keeps the booking create/update entries that parse.
+// Also pulls the Bin, so a booking someone deliberately deleted isn't reported as lost.
+async function scanForMissingBookings(fromKey, toKey) {
+  const fromMs = keyToDate(fromKey).getTime();
+  const toMs = keyEndOfDay(toKey).getTime();
+
+  try { state.deletedBookings = await DB.fetchAll("deletedBookings"); }
+  catch (err) { console.error("Audit couldn't load the Bin", err); }
+
+  const seen = new Set();
+  const parsed = [];
+  // Counted and shown rather than swallowed: a booking entry whose date we can't read is a
+  // booking this scan cannot vouch for, which is different from one it checked and cleared.
+  let unparsed = 0;
+  let scanned = 0, oldestAt = null, reachedWindowStart = false;
+  for (let page = 0; page < 60; page++) { // hard stop at ~12k rows so a runaway log can't hang the app
+    const batch = await DB.getPage("activity", { afterAt: oldestAt, limit: AUDIT_SCAN_PAGE });
+    if (!batch.length) { reachedWindowStart = true; break; }
+    for (const a of batch) {
+      if (seen.has(a.id)) continue;
+      seen.add(a.id);
+      scanned++;
+      if (a.at < fromMs || a.at > toMs) continue;
+      if (a.type !== "booking") continue;
+      if (a.action !== "created" && a.action !== "updated") continue;
+      const p = parseAuditEntry(a);
+      if (p) parsed.push(p); else unparsed++;
+    }
+    oldestAt = batch[batch.length - 1].at;
+    if (oldestAt < fromMs) { reachedWindowStart = true; break; }
+    if (batch.length < AUDIT_SCAN_PAGE) { reachedWindowStart = true; break; }
+  }
+
+  // One row per pet+date+time, keeping the newest entry — a booking edited five times logs five
+  // rows for the same slot, and only the last one describes how it was left.
+  const slots = new Map();
+  for (const p of parsed) {
+    const slotKey = `${p.petName.toLowerCase()}|${p.key}|${p.min}`;
+    const prev = slots.get(slotKey);
+    if (!prev || p.at > prev.at) slots.set(slotKey, p);
+  }
+  const rows = [...slots.values()]
+    .sort((a, b) => (a.key === b.key ? a.min - b.min : a.key < b.key ? -1 : 1));
+  return { rows, scanned, reachedWindowStart, unparsed };
+}
+
+// Is this logged slot covered by a booking in `list`? Matches on pet name + occurrence date +
+// time-of-day, so a recurring series counts for every date it actually falls on.
+function auditFind(list, r) {
+  const want = r.petName.trim().toLowerCase();
+  return (list || []).find((b) => {
+    if (String(b.petName || "").trim().toLowerCase() !== want) return false;
+    const occ = occurrenceOnDate(b, r.key);
+    if (!occ) return false;
+    const sp = shopParts(occ);
+    return sp.getUTCHours() * 60 + sp.getUTCMinutes() === r.min;
+  });
+}
+// Re-evaluated on every render rather than frozen at scan time, so a row resolves itself the
+// moment the booking is saved back in — no need to re-scan after each fix.
+function auditVerdict(r) {
+  const hit = auditFind(state.bookings, r);
+  if (hit) return hit.status === "cancelled" ? "cancelled" : "ok";
+  if (auditFind(state.deletedBookings, r)) return "binned";
+  const want = r.petName.trim().toLowerCase();
+  const sameDay = state.bookings.some((b) =>
+    String(b.petName || "").trim().toLowerCase() === want && occurrenceOnDate(b, r.key));
+  if (sameDay) return "time-changed";
+  return "missing";
+}
+const AUDIT_EXPLAINED = {
+  "ok": "มีอยู่แล้ว",
+  "cancelled": "ถูกยกเลิก",
+  "binned": "อยู่ในถังขยะ (ลบเอง)",
+  "time-changed": "วันเดิมแต่เวลาเปลี่ยน",
+};
+
+// A pet with another live booking near the missing date was quite possibly just rescheduled. That
+// stays a HINT on the row rather than a reason to filter the row out: an earlier version of this
+// treated "the pet has a newer log entry" as proof of a reschedule and quietly hid the row, which
+// would bury a genuinely lost booking for any pet that has more than one. Returns the nearest
+// other date found, closest first, or null.
+function auditNearbyHint(r) {
+  const want = r.petName.trim().toLowerCase();
+  const mates = state.bookings.filter((b) => String(b.petName || "").trim().toLowerCase() === want);
+  if (!mates.length) return null;
+  for (let d = 1; d <= 21; d++) {
+    for (const k of [addDaysKey(r.key, -d), addDaysKey(r.key, d)]) {
+      if (mates.some((b) => occurrenceOnDate(b, k))) return k;
+    }
+  }
+  return null;
+}
+function auditWhenLabel(r) {
+  const d = keyAtMinute(r.key, r.min);
+  const day = d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: SHOP_TZ });
+  return `${day} ${fmtTime(d)}`;
+}
+
+function auditRow(r, verdict) {
+  const pet = state.pets.find((p) => String(p.name || "").trim().toLowerCase() === r.petName.trim().toLowerCase());
+  const nearby = verdict === "missing" ? auditNearbyHint(r) : null;
+  return `
+  <div class="audit-row">
+    <div class="grow">
+      <div><strong>${esc(r.petName)}</strong>${r.breed ? ` <span class="faint">(${esc(r.breed)})</span>` : ""}${pet ? "" : ` <span class="faint" style="font-size:11px">· ไม่มีโปรไฟล์น้อง</span>`}</div>
+      <div class="faint" style="font-size:12px">
+        ${esc(auditWhenLabel(r))}${r.guessedYear ? ` <span class="audit-warn">· ปีไม่ชัวร์</span>` : ""}
+        ${r.groomerName ? ` · ${esc(r.groomerName)}` : ""}
+      </div>
+      <div class="faint" style="font-size:11px">บันทึกไว้ ${esc(fmtDate(r.at))} ${esc(fmtTime(r.at))}${r.actorName ? ` โดย ${esc(r.actorName)}` : ""} (${esc(r.action)})</div>
+      ${nearby ? `<div class="audit-hint">💡 น้องนี้มีคิวอยู่วันที่ ${esc(fmtDateKey(nearby))} — อาจแค่ถูกย้ายวัน ไม่ได้หาย ตรวจก่อนใส่กลับ</div>` : ""}
+    </div>
+    ${verdict === "missing"
+      ? `<button class="btn sm primary" data-action="audit-restore" data-row="${esc(r.id)}">ใส่กลับ</button>`
+      : `<span class="faint" style="font-size:12px">${esc(AUDIT_EXPLAINED[verdict] || verdict)}</span>`}
+  </div>`;
+}
+
+// Owner/Admin only — it reads the whole activity history and offers to re-create bookings.
+function auditSection() {
+  if (!canDelete()) return "";
+  const from = state.auditFrom || AUDIT_DEFAULT_FROM;
+  const to = state.auditTo || AUDIT_DEFAULT_TO;
+  const rows = state.auditRows;
+
+  // Nothing inside a collapsed <details> is visible, and grading every row re-checks every
+  // booking — which render() would then redo on every incoming snapshot. Build the inside only
+  // while the panel is actually open; bindView re-renders once on opening it.
+  if (!state.auditOpen) {
+    return `
+    <details class="card audit-card" id="audit-box" style="margin-bottom:16px">
+      <summary class="audit-head"><h3 class="section-title" style="display:inline">🔎 ตรวจหาคิวที่หาย</h3></summary>
+    </details>`;
+  }
+
+  let body;
+  if (state.auditScanning) {
+    body = `<div class="muted">กำลังไล่ประวัติย้อนหลัง… อาจใช้เวลาสักครู่ ไม่ต้องปิดหน้านี้</div>`;
+  } else if (!rows) {
+    body = `<div class="muted">กด “ตรวจสอบ” เพื่อไล่ log ในช่วงนี้ แล้วเทียบกับคิวที่มีอยู่จริงวันนี้</div>`;
+  } else {
+    const graded = rows.map((r) => ({ r, v: auditVerdict(r) }));
+    const today = todayKey();
+    const missingAll = graded.filter((g) => g.v === "missing");
+    const missing = state.auditIncludePast ? missingAll : missingAll.filter((g) => g.r.key >= today);
+    const hiddenPast = missingAll.length - missing.length;
+    const explained = graded.filter((g) => g.v !== "missing" && g.v !== "ok");
+    const okCount = graded.filter((g) => g.v === "ok").length;
+
+    body = `
+      <div class="row" style="gap:16px; flex-wrap:wrap; margin-bottom:12px">
+        <span class="faint" style="font-size:12px">ไล่ log ${state.auditScanned} รายการ · เจอคิวในช่วงนี้ ${rows.length} ช่อง · ยังอยู่ครบ ${okCount}</span>
+      </div>
+      ${!state.auditReachedStart ? `<div class="audit-note">⚠️ ประวัติยาวเกินกว่าที่ไล่ได้ในรอบเดียว — ผลที่ได้อาจไม่ครบทั้งช่วง</div>` : ""}
+      ${state.auditUnparsed ? `<div class="audit-note">⚠️ มี ${state.auditUnparsed} รายการใน log ที่อ่านวันเวลาไม่ออก (เครื่องที่บันทึกตั้งภาษาที่ยังไม่รองรับ) — รายการพวกนี้ไม่ได้ถูกตรวจ</div>` : ""}
+      ${missing.length ? `
+        <h4 class="section-title" style="margin:6px 0 4px">❗ ไม่พบคิวนี้แล้ว — ต้องใส่กลับ (${missing.length})</h4>
+        ${missing.map((g) => auditRow(g.r, g.v)).join("")}` : `
+        <div class="empty">ไม่พบคิวที่หายในช่วงนี้ 🎉</div>`}
+      ${hiddenPast ? `
+        <label class="audit-past-toggle">
+          <input type="checkbox" id="audit-past" ${state.auditIncludePast ? "checked" : ""}>
+          <span>แสดงวันที่ผ่านมาแล้วด้วย (ซ่อนอยู่ ${hiddenPast} รายการ)</span>
+        </label>` : ""}
+      ${explained.length ? `
+        <details style="margin-top:14px">
+          <summary class="audit-summary">อธิบายได้แล้ว ${explained.length} รายการ — ไม่ต้องทำอะไร</summary>
+          <div style="margin-top:6px">${explained.map((g) => auditRow(g.r, g.v)).join("")}</div>
+        </details>` : ""}`;
+  }
+
+  return `
+  <details class="card audit-card" id="audit-box" ${state.auditOpen ? "open" : ""} style="margin-bottom:16px">
+    <summary class="audit-head"><h3 class="section-title" style="display:inline">🔎 ตรวจหาคิวที่หาย</h3></summary>
+    <div class="card pad" style="border:0">
+      <div class="muted" style="margin-bottom:12px">
+        ช่วง 17 ก.ย. – 2 พ.ย. 2026 มีบั๊กที่ทำให้คิวถูกเขียนทับหรือย้อนกลับเอง เครื่องมือนี้ไล่ log
+        ย้อนหลังในช่วงที่เลือก แล้วเทียบกับคิวที่มีอยู่จริง — ถ้า log บอกว่าเคยมีคิว แต่วันนี้ไม่มี
+        และไม่ได้อยู่ในถังขยะ จะขึ้นให้กดใส่กลับ (เปิดฟอร์มให้กรอกบริการ/ราคาเอง เพราะ log ไม่ได้เก็บไว้)
+      </div>
+      <div class="field-row">
+        <div class="field"><label>ตั้งแต่วันที่</label><input type="date" id="audit-from" value="${esc(from)}"></div>
+        <div class="field"><label>ถึงวันที่</label><input type="date" id="audit-to" value="${esc(to)}"></div>
+      </div>
+      <div class="help" style="margin:-4px 0 12px">ค่าเริ่มต้นคือช่วงที่บั๊กมีผล — ขยายได้ถ้าอยากไล่กว้างกว่านั้น</div>
+      <button class="btn primary" data-action="audit-scan" ${state.auditScanning ? "disabled" : ""}>
+        ${state.auditScanning ? "กำลังตรวจ…" : "ตรวจสอบ"}
+      </button>
+      <div style="margin-top:14px">${body}</div>
+      <div class="audit-note" style="margin-top:14px">
+        หาไม่เจอ: คิวที่ถูกย้อนแค่ <strong>บริการ / ราคา / โน้ต</strong> (log ไม่ได้เก็บช่องพวกนี้),
+        คิวที่สร้างก่อน 17 ก.ย. แล้วโดนทับโดยไม่มีใครแก้ในช่วงนั้น, และคิวซ้ำรอบอื่นของชุดเดียวกัน
+        (log เก็บแค่วันแรกของชุด)
+      </div>
+    </div>
+  </details>`;
+}
+
 /* ---------- NOTIFICATIONS ---------- */
 // Its own page rather than only the Home card, which staff had to scroll past everything else to
 // reach. Older history stays deliberately NOT live-subscribed: the feed seeds from the newest ~50
@@ -1132,6 +1450,7 @@ function viewNotifications() {
   <div class="page-head">
     <h1>Notifications <span class="faint" style="font-weight:600">(${items.length})</span></h1>
   </div>
+  ${auditSection()}
   <div class="card pad">
     <div class="muted" style="margin-bottom:10px">Everything that's happened in the shop, newest first.</div>
     <div class="stack" style="gap:2px">
@@ -3439,6 +3758,18 @@ function bindView() {
   // Same idea for the Pets-page Bin — keep it open/closed across the re-render a restore/purge triggers.
   const petsBin = $("#pets-bin");
   if (petsBin) petsBin.ontoggle = () => { state.petsBinOpen = petsBin.open; };
+  // Audit box: remember open/closed, and keep its date range in state so a re-render (scan
+  // start, scan finish, a booking saved back in) doesn't reset what the user picked.
+  const auditBox = $("#audit-box");
+  if (auditBox) auditBox.ontoggle = () => {
+    const opening = auditBox.open && !state.auditOpen;
+    state.auditOpen = auditBox.open;
+    if (opening) render(); // the panel's contents are only built while it's open — see auditSection()
+  };
+  const auditFrom = $("#audit-from"), auditTo = $("#audit-to"), auditPast = $("#audit-past");
+  if (auditFrom) auditFrom.onchange = () => { state.auditFrom = auditFrom.value; };
+  if (auditTo) auditTo.onchange = () => { state.auditTo = auditTo.value; };
+  if (auditPast) auditPast.onchange = () => { state.auditIncludePast = auditPast.checked; render(); };
 
   // Click an empty spot on the Schedule grid (Day/Week) to open "New booking" prefilled with
   // that date/time and groomer column, if any. Snaps to the start of whichever hour row was
@@ -3722,6 +4053,44 @@ async function handleAction(action, data) {
       }
       break;
     }
+    case "audit-scan": {
+      if (!canDelete()) break;
+      const from = state.auditFrom || AUDIT_DEFAULT_FROM;
+      const to = state.auditTo || AUDIT_DEFAULT_TO;
+      if (from > to) { toast("ช่วงวันที่สลับกันอยู่ — ตรวจดูอีกครั้ง"); break; }
+      state.auditScanning = true; state.auditOpen = true; render();
+      try {
+        const res = await scanForMissingBookings(from, to);
+        state.auditRows = res.rows;
+        state.auditScanned = res.scanned;
+        state.auditUnparsed = res.unparsed;
+        state.auditReachedStart = res.reachedWindowStart;
+      } catch (err) {
+        console.error("Audit scan failed", err);
+        toast("ตรวจไม่สำเร็จ — ลองอีกครั้ง");
+      } finally {
+        state.auditScanning = false; render();
+      }
+    } break;
+    // Opens a prefilled New booking form rather than writing anything: the activity log never
+    // recorded services/hours/price/notes, so only a human can finish the record.
+    case "audit-restore": {
+      if (!canDelete()) break;
+      const r = (state.auditRows || []).find((x) => x.id === data.row);
+      if (!r) break;
+      const want = r.petName.trim().toLowerCase();
+      const pet = state.pets.find((p) => String(p.name || "").trim().toLowerCase() === want) || null;
+      const grm = state.groomers.find((g) => String(g.name || "").trim().toLowerCase() === String(r.groomerName || "").trim().toLowerCase());
+      bookingModal(null, pet, { start: keyAtMinute(r.key, r.min), groomerId: grm ? grm.id : null });
+      // No pet profile matches the logged name (the pet record may have been deleted too), so
+      // seed the free-text name field by hand — bookingModal only reads a name off a real pet.
+      if (!pet) {
+        const nameInput = $("#b-pet");
+        if (nameInput) { nameInput.value = r.petName; nameInput.dispatchEvent(new Event("input")); }
+        const breedInput = $("#b-breed");
+        if (breedInput && r.breed && !breedInput.value) breedInput.value = r.breed;
+      }
+    } break;
     case "clear-search": state.search = { name: "", breed: "" }; render(); break;
     case "clear-pets-search": state.petsQuery = ""; render(); break;
     case "go-pets": go("pets"); break;

@@ -291,6 +291,35 @@ whose data belongs to one physical place rather than to whoever is looking at it
   exclusion, ambiguous pet-name matching) were only correctly diagnosed this way rather than by
   reasoning from the description alone.
 
+## [Reusable] The activity log is also the forensic record
+
+Written for this app's Sept–Nov 2026 overwrite incident, but the shape generalises to any app
+that logs user actions and later has to answer "what did we lose?".
+
+- **Put enough in a log line to reconstruct the record.** `logActivity("booking","updated", …)`
+  embeds the booking's date and time in its summary text, which is the only reason the lost
+  bookings could be found at all — the documents themselves were overwritten in place, and
+  Firestore keeps no version history. Delete entries DON'T carry the date, which is exactly the
+  gap that made deletions unrecoverable from the log alone (the Bin covered that instead).
+- **Beware `toLocale*String(undefined, …)` in anything persisted.** `undefined` means the
+  *logging device's* locale, so one collection holds "Thu, Jan 28", "Thu 28 Jan" and
+  "พฤหัส 28 ม.ค." side by side. `parseAuditEntry()` has to read all of them, and the year is
+  missing entirely — the weekday name is what pins it down (28 Jan is a Thursday in 2027 but a
+  Friday in 2028). A log line meant to be machine-read later should carry a raw ISO instant
+  alongside the human text.
+- **A recovery tool fails closed.** A line it can't read is counted and reported as unchecked,
+  never resolved to a best-guess date; a flagged row opens a *prefilled form* rather than writing
+  anything, because the log never recorded services/hours/price/notes. And resist filtering rows
+  out on a clever heuristic: the first cut here hid any row whose pet had a newer log entry, which
+  would have buried real losses for every pet with more than one booking — it's a visible hint on
+  the row now, not a filter.
+- Verdicts are recomputed on every render rather than frozen at scan time, so a row disappears the
+  moment the booking is saved back in. The panel builds its contents only while open — grading
+  every row re-checks every booking, and `render()` runs on every incoming snapshot.
+
+Entry point: the Owner/Admin-only "🔎 ตรวจหาคิวที่หาย" panel on the Notifications page
+(`auditSection()` / `scanForMissingBookings()` / `parseAuditEntry()`), covered by `node test.js`.
+
 ## This project's data model (Groomingdale-specific)
 
 Firestore collections: `pets`, `groomers`, `bookings`, `admins`, `settings`, `activity`,

@@ -138,6 +138,47 @@ function runTests() {
      ["2030-03-18", "2030-04-01", "2030-04-08"], "weekly: excluded date is skipped");
   eq(A.occurrenceOnDate(skipped, "2030-03-25"), null, "excluded date has no occurrence");
 
+  /* --- parseAuditEntry: reading a booking's date/time back out of an activity log line ---
+     logActivity() embeds the date and time in the summary text using fmtDate/fmtTime, which pass
+     `undefined` as the locale — i.e. the LOGGING PHONE's language. So the one collection holds
+     "Thu, Jan 28 5:00 PM", "Thu 28 Jan 17:00" and "พฤหัส 28 ม.ค. 17:00" side by side, and the
+     missing-booking audit has to read all of them. The year is never written at all; the weekday
+     is what pins it down (28 Jan is a Thursday in 2027 but a Friday in 2028). */
+  const TZ = "Asia/Bangkok";
+  const mkDate = (d, loc) => new Date(d).toLocaleDateString(loc, { weekday: "short", day: "numeric", month: "short", timeZone: TZ });
+  const mkTime = (d, loc) => new Date(d).toLocaleTimeString(loc, { hour: "numeric", minute: "2-digit", timeZone: TZ });
+  const auditCases = [
+    { iso: "2027-01-28T17:00:00+07:00", key: "2027-01-28", min: 17 * 60, logAt: "2026-10-02T12:00:00+07:00" },
+    { iso: "2026-12-05T09:30:00+07:00", key: "2026-12-05", min: 9 * 60 + 30, logAt: "2026-09-20T12:00:00+07:00" },
+    { iso: "2027-03-18T00:00:00+07:00", key: "2027-03-18", min: 0, logAt: "2026-10-10T12:00:00+07:00" },
+    { iso: "2028-02-29T14:15:00+07:00", key: "2028-02-29", min: 14 * 60 + 15, logAt: "2026-10-05T12:00:00+07:00" },
+    { iso: "2027-07-04T19:45:00+07:00", key: "2027-07-04", min: 19 * 60 + 45, logAt: "2026-09-18T12:00:00+07:00" },
+  ];
+  for (const loc of ["en-US", "en-GB", "th-TH"]) {
+    for (const c of auditCases) {
+      const summary = `Miso (Maltese) with Mint — ${mkDate(c.iso, loc)} ${mkTime(c.iso, loc)}`;
+      const got = A.parseAuditEntry({ id: "a1", at: new Date(c.logAt).getTime(), action: "updated", summary });
+      // guessedYear false means the weekday was readable, so the year is known rather than assumed.
+      eq(got && { key: got.key, min: got.min, pet: got.petName, breed: got.breed, grm: got.groomerName, guessed: got.guessedYear },
+        { key: c.key, min: c.min, pet: "Miso", breed: "Maltese", grm: "Mint", guessed: false },
+        `audit: ${loc} reads back "${summary}"`);
+    }
+  }
+  // Must fail CLOSED on anything it can't read: no date is fine (the audit counts and reports
+  // those rows), a confidently WRONG date is not. German writes "Dez."/"März", which no token matches.
+  for (const c of auditCases) {
+    const got = A.parseAuditEntry({ id: "a1", at: new Date(c.logAt).getTime(), summary: `Miso with Mint — ${mkDate(c.iso, "de-DE")} ${mkTime(c.iso, "de-DE")}` });
+    eq(got ? got.key : null, got ? c.key : null, `audit: unsupported locale never guesses a wrong date (${c.key})`);
+  }
+  // Summaries with no date at all (deletes, cancellations, imports) must be skipped outright.
+  for (const s of ["Miso (Maltese) with Mint", "Imported 4 bookings from Calendar", "Removed Thu 28 Jan from Miso's recurring booking"]) {
+    eq(A.parseAuditEntry({ id: "x", at: Date.parse("2026-10-02T05:00:00Z"), summary: s }), null, `audit: skips dateless summary "${s}"`);
+  }
+  eq(A.parseAuditEntry({ id: "x", at: Date.parse("2026-10-02T05:00:00Z"), summary: "Coco with Socks (Shih Tzu) with Boat — Thu, 28 Jan 17:00" }).petName,
+    "Coco with Socks", "audit: splits the groomer off at the LAST ' with '");
+  eq((() => { const g = A.parseAuditEntry({ id: "x", at: Date.parse("2026-10-02T05:00:00Z"), summary: "Bua with No preference — Thu, 28 Jan 17:00" }); return [g.petName, g.breed, g.groomerName]; })(),
+    ["Bua", "", "No preference"], "audit: no breed, no-preference groomer");
+
   /* --- a value that must be identical in every timezone --- */
   return JSON.stringify({
     dateKeys: ["2026-03-17T18:00:00.000Z", MAR18_10AM, "2026-03-18T17:30:00.000Z"].map(A.dateKey),
@@ -146,6 +187,12 @@ function runTests() {
     keyMath: [A.addDaysKey("2026-12-31", 1), A.addMonthsKey("2026-01-31", 1), A.startOfWeekKey("2026-03-18")],
     series: A.upcomingOccurrences(katia, new Date("2030-04-01")).map(A.dateKey),
     weeklyEarly: A.upcomingOccurrences(earlyBird, new Date("2031-01-01")).map(A.dateKey),
+    // Reading a log line's date must not depend on the phone's zone either.
+    audit: ["en-US", "en-GB", "th-TH"].map((loc) => {
+      const c = auditCases[0];
+      const g = A.parseAuditEntry({ id: "a1", at: new Date(c.logAt).getTime(), summary: `Miso (Maltese) with Mint — ${mkDate(c.iso, loc)} ${mkTime(c.iso, loc)}` });
+      return g && `${g.key} ${g.min} ${g.guessedYear}`;
+    }),
   });
 }
 

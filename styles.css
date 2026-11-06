@@ -471,3 +471,28 @@ input[type="radio"]:checked::after{content:""; position:absolute; inset:3px; bor
 .spread{display:flex; align-items:center; justify-content:space-between; gap:12px}
 .tag-list{display:flex; gap:8px; flex-wrap:wrap}
 .link{color:var(--brand); font-weight:600; cursor:pointer; background:none; border:0; padding:0}
+
+/* ---------- Missing-booking audit panel (Notifications page) ----------
+   Deliberately its own collapsible/row classes rather than reusing the Bookings page's
+   .bookings-collapsible and .bin-row: a later responsive rule written for those would silently
+   reshape this unrelated panel. Inputs inherit the global 16px, so no iOS zoom-on-focus. */
+.audit-card{overflow:hidden}
+.audit-card .empty{border:0; box-shadow:none; border-radius:0; padding:28px 16px}
+.audit-head{cursor:pointer; list-style:none; padding:16px 20px; min-height:44px; display:flex; align-items:center}
+.audit-head::-webkit-details-marker{display:none}
+.audit-head::before{content:"▸"; display:inline-block; margin-right:8px; color:var(--ink-faint); transition:transform .15s}
+.audit-card[open] .audit-head::before{transform:rotate(90deg)}
+.audit-row{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
+  padding:10px 0; border-top:1px solid var(--line)}
+.audit-row .btn{min-height:44px}
+.audit-warn{color:var(--danger); font-weight:600}
+.audit-hint{font-size:11px; color:var(--ink-soft); background:var(--surface-2); border-radius:8px; padding:5px 8px; margin-top:4px; line-height:1.45}
+.audit-note{background:var(--surface-2); border-radius:10px; padding:10px 12px;
+  font-size:12px; line-height:1.55; color:var(--ink-soft)}
+.audit-summary{cursor:pointer; font-size:13px; font-weight:600; color:var(--ink-soft);
+  min-height:44px; display:flex; align-items:center}
+/* The whole label is tappable, at a real touch-target height. A lone checkbox like this one is
+   fine with the global appearance:none styling — only the dense per-service checkbox+label rows
+   need the hidden-input + sibling-span fallback (see .svc-real-checkbox). */
+.audit-past-toggle{display:flex; align-items:center; gap:10px; min-height:44px; margin-top:8px;
+  font-size:13px; color:var(--ink-soft); cursor:pointer}
